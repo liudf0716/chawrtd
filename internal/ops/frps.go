@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var runShell = RunShell
+
 type DeployFRPSRequest struct {
 	Port  int    `json:"port"`
 	Token string `json:"token"`
@@ -71,7 +73,7 @@ sudo systemctl enable --now nwct-server
 sudo systemctl status --no-pager --lines=20 nwct-server || true
 `, req.Port, token)
 
-	output, err := RunShell(timeout, script)
+	output, err := runShell(timeout, script)
 	if err != nil {
 		return Result{}, err
 	}
@@ -94,11 +96,15 @@ if [ -z "$service_state" ]; then
   service_state="unknown"
 fi
 
-if [ -f "$config" ]; then
-  cfg=$(cat "$config")
-else
-  cfg=""
-fi
+read_config() {
+	if [ -r "$1" ]; then
+		cat "$1"
+		return 0
+	fi
+	sudo -n cat "$1" 2>/dev/null || true
+}
+
+cfg=$(read_config "$config")
 
 ports=$(ss -lntup 2>/dev/null | grep -E "(nwct-server|frps)" || true)
 
@@ -112,7 +118,7 @@ echo "$ports"
 echo "PORTS_END"
 `
 
-	output, err := RunShell(timeout, script)
+	output, err := runShell(timeout, script)
 	if err != nil {
 		return Result{}, err
 	}
@@ -131,7 +137,7 @@ sudo rm -f /etc/systemd/system/nwct-server.service
 sudo rm -rf /etc/nwct
 sudo systemctl daemon-reload
 `
-	output, err := RunShell(timeout, script)
+	output, err := runShell(timeout, script)
 	if err != nil {
 		return Result{}, err
 	}
