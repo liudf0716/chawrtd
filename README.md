@@ -30,15 +30,27 @@ go run ./cmd/chawrtd
 
 Environment variables:
 
-- `CHAWRTD_ADDR` (default `:8090`)
+- `CHAWRTD_ADDR` (default `:8001`)
 - `CHAWRTD_DEFAULT_TIMEOUT_SECONDS` (default `120`)
+- `CHAWRTD_TLS_CERT_FILE` (optional PEM certificate file; when set with key file, server serves HTTPS/WSS)
+- `CHAWRTD_TLS_KEY_FILE` (optional PEM private key file; must be set together with cert file)
+
+Example with TLS enabled:
+
+```bash
+CHAWRTD_TLS_CERT_FILE=/etc/chawrtd/server.crt \
+CHAWRTD_TLS_KEY_FILE=/etc/chawrtd/server.key \
+go run ./cmd/chawrtd
+```
 
 ## API
+
+When TLS is enabled, use `https://` for the HTTP API and `wss://host:8001/ws/clawwrt` for router device connections.
 
 ### Health
 
 ```bash
-curl -s http://127.0.0.1:8090/healthz
+curl -s http://127.0.0.1:8001/healthz
 ```
 
 ### FRPS
@@ -46,7 +58,7 @@ curl -s http://127.0.0.1:8090/healthz
 Deploy:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8090/v1/frps/deploy \
+curl -s -X POST http://127.0.0.1:8001/v1/frps/deploy \
   -H 'Content-Type: application/json' \
   -d '{"port":7070,"token":"replace-with-random-token"}'
 ```
@@ -54,13 +66,13 @@ curl -s -X POST http://127.0.0.1:8090/v1/frps/deploy \
 Status:
 
 ```bash
-curl -s http://127.0.0.1:8090/v1/frps/status
+curl -s http://127.0.0.1:8001/v1/frps/status
 ```
 
 Reset:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8090/v1/frps/reset
+curl -s -X POST http://127.0.0.1:8001/v1/frps/reset
 ```
 
 ### WireGuard
@@ -68,7 +80,7 @@ curl -s -X POST http://127.0.0.1:8090/v1/frps/reset
 Deploy:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8090/v1/wg/deploy \
+curl -s -X POST http://127.0.0.1:8001/v1/wg/deploy \
   -H 'Content-Type: application/json' \
   -d '{"port":51820,"tunnelIp":"10.0.0.1/24"}'
 ```
@@ -76,13 +88,13 @@ curl -s -X POST http://127.0.0.1:8090/v1/wg/deploy \
 Status:
 
 ```bash
-curl -s http://127.0.0.1:8090/v1/wg/status
+curl -s http://127.0.0.1:8001/v1/wg/status
 ```
 
 Reset:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8090/v1/wg/reset \
+curl -s -X POST http://127.0.0.1:8001/v1/wg/reset \
   -H 'Content-Type: application/json' \
   -d '{"interface":"wg0","removeKeys":true}'
 ```
@@ -90,7 +102,7 @@ curl -s -X POST http://127.0.0.1:8090/v1/wg/reset \
 Verify:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8090/v1/wg/verify \
+curl -s -X POST http://127.0.0.1:8001/v1/wg/verify \
   -H 'Content-Type: application/json' \
   -d '{"pingTargets":["10.0.0.2","10.0.0.3"]}'
 ```
