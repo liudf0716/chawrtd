@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -60,8 +61,36 @@ func (s *Server) InitializeAliasStore(filePath string) error {
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// WebSocket upgrade for device connections
-		if r.URL.Path == "/ws/clawwrt" && r.Header.Get("Connection") == "Upgrade" && r.Header.Get("Upgrade") == "websocket" {
+		if r.URL.Path == "/ws/clawwrt" {
+			connectionHeader := r.Header.Get("Connection")
+			upgradeHeader := r.Header.Get("Upgrade")
+			xForwardedProto := r.Header.Get("X-Forwarded-Proto")
+			isUpgrade, reason := websocketHandshakeCheck(r)
+
+			log.Printf(
+				"chawrtd websocket request path=%s method=%s remote=%s ua=%q conn=%q upgrade=%q x_forwarded_proto=%q tls=%t is_upgrade=%t reason=%q",
+				r.URL.Path,
+				r.Method,
+				r.RemoteAddr,
+				r.UserAgent(),
+				connectionHeader,
+				upgradeHeader,
+				xForwardedProto,
+				r.TLS != nil,
+				isUpgrade,
+				reason,
+			)
+
+			if !isUpgrade {
+				writeJSON(w, http.StatusUpgradeRequired, map[string]any{
+					"error": "websocket upgrade required",
+					"reason": reason,
+				})
+				return
+			}
+
 			if err := s.wsManager.HandleUpgrade(w, r); err != nil {
+				log.Printf("chawrtd websocket upgrade failed remote=%s err=%v", r.RemoteAddr, err)
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			}
 			return
@@ -76,6 +105,31 @@ func (s *Server) Handler() http.Handler {
 		// Delegate to existing routes
 		s.mux.ServeHTTP(w, r)
 	})
+}
+
+func websocketHandshakeCheck(r *http.Request) (bool, string) {
+	if r.Method != http.MethodGet {
+		return false, "method must be GET"
+	}
+	if !headerHasToken(r.Header.Get("Connection"), "upgrade") {
+		return false, "connection header missing upgrade token"
+	}
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Upgrade")), "websocket") {
+		return false, "upgrade header must be websocket"
+	}
+	return true, "ok"
+}
+
+func headerHasToken(value string, token string) bool {
+	if value == "" {
+		return false
+	}
+	for _, part := range strings.Split(value, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), token) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) registerRoutes() {
