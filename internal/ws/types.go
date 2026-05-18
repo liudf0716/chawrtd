@@ -24,7 +24,6 @@ type Message struct {
 	DeviceID  string                 `json:"device_id,omitempty"`
 	ReqID     interface{}            `json:"req_id,omitempty"`
 	Data      map[string]interface{} `json:"data,omitempty"`
-	Payload   map[string]interface{} `json:"payload,omitempty"`
 	Token     string                 `json:"token,omitempty"`
 	Mode      interface{}            `json:"mode,omitempty"`
 	Gateway   interface{}            `json:"gateway,omitempty"`

@@ -194,15 +194,15 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodPost {
 		// Send command to device
-		var payload map[string]any
-		if err := decodeJSON(r, &payload); err != nil {
+		var requestData map[string]any
+		if err := decodeJSON(r, &requestData); err != nil {
 			log.Printf("chawrtd POST /v1/device/%s/%s: decode error: %v", deviceID, operation, err)
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
 
 		log.Printf("chawrtd POST /v1/device/%s/%s: sending command with timeout=%v", deviceID, operation, s.defaultTimeout)
-		result, err := s.wsManager.SendCommand(deviceID, operation, payload, s.defaultTimeout)
+		result, err := s.wsManager.SendCommand(deviceID, operation, requestData, s.defaultTimeout)
 		if err != nil {
 			if errors.Is(err, ws.ErrDeviceNotFound) {
 				log.Printf("chawrtd POST /v1/device/%s/%s: device not found", deviceID, operation)

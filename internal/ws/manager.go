@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"strings"
 )
 
 const (
@@ -414,7 +415,7 @@ func (m *Manager) sendResponse(conn *websocket.Conn, reqID interface{}, data map
 }
 
 // SendCommand sends a command to a device and waits for response
-func (m *Manager) SendCommand(deviceID string, op string, payload map[string]any, timeout time.Duration) (map[string]any, error) {
+func (m *Manager) SendCommand(deviceID string, op string, commandData map[string]any, timeout time.Duration) (map[string]any, error) {
 	log.Printf("chawrtd SendCommand: deviceId=%q op=%q timeout=%v", deviceID, op, timeout)
 
 	m.mu.RLock()
@@ -438,7 +439,7 @@ func (m *Manager) SendCommand(deviceID string, op string, payload map[string]any
 	msg := Message{
 		Op:      op,
 		ReqID:   reqID,
-		Payload: payload,
+		Data:    commandData,
 	}
 
 	// Register pending request
@@ -480,9 +481,9 @@ func (m *Manager) SendCommand(deviceID string, op string, payload map[string]any
 	select {
 	case resp := <-reqChan:
 		if respMsg, ok := resp.(Message); ok {
-			if respMsg.Error != "" {
-				log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response error: %s", deviceID, op, reqID, respMsg.Error)
-				return nil, errors.New(respMsg.Error)
+			if respErr := responseError(respMsg); respErr != nil {
+				log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response error: %v", deviceID, op, reqID, respErr)
+				return nil, respErr
 			}
 			log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response success", deviceID, op, reqID)
 			return respMsg.Data, nil
@@ -561,6 +562,39 @@ func responseDataType(msg Message) string {
 	}
 	t, _ := msg.Data["type"].(string)
 	return t
+}
+
+func responseError(msg Message) error {
+	if msg.Error != "" {
+		return errors.New(msg.Error)
+	}
+
+	responseCode := ""
+	if msg.Response != nil {
+		responseCode = fmt.Sprintf("%v", msg.Response)
+	}
+	if responseCode != "" && responseCode != "200" {
+		if data := msg.Data; data != nil {
+			if message, ok := data["message"].(string); ok && message != "" {
+				return fmt.Errorf("response %s: %s", responseCode, message)
+			}
+			if status, ok := data["status"].(string); ok && status != "" {
+				return fmt.Errorf("response %s: %s", responseCode, status)
+			}
+		}
+		return fmt.Errorf("response %s", responseCode)
+	}
+
+	if data := msg.Data; data != nil {
+		if status, ok := data["status"].(string); ok && strings.EqualFold(status, "error") {
+			if message, ok := data["message"].(string); ok && message != "" {
+				return errors.New(message)
+			}
+			return errors.New("response status error")
+		}
+	}
+
+	return nil
 }
 
 func isResponseMessage(op string, msg Message) bool {
