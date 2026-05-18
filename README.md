@@ -56,8 +56,15 @@ Environment variables:
 - `CHAWRTD_DEFAULT_TIMEOUT_SECONDS` (default `120`)
 - `CHAWRTD_CONFIG_FILE` (optional explicit TOML path)
 - `CHAWRTD_TOKEN` (default `clawwrt`)
+- `CHAWRTD_ALIAS_FILE` (default `device-aliases.json`)
 - `CHAWRTD_TLS_CERT_FILE` (optional PEM certificate file; when set with key file, server serves HTTPS/WSS)
 - `CHAWRTD_TLS_KEY_FILE` (optional PEM private key file; must be set together with cert file)
+
+Device alias persistence:
+
+- On first device connection, chawrtd auto-assigns aliases as `WiFi1`, `WiFi2`, `WiFi3`, ...
+- Aliases are persisted in `CHAWRTD_ALIAS_FILE` as a device_id -> alias JSON map.
+- Existing aliases are reused on reconnect.
 
 Example with TLS enabled:
 

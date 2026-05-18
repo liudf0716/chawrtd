@@ -22,6 +22,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_DEFAULT_TIMEOUT_SECONDS (default 120)\n")
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_CONFIG_FILE (optional, defaults: ./chawrtd.toml or /etc/chawrtd/chawrtd.toml)\n")
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_TOKEN (default clawwrt)\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_ALIAS_FILE (default device-aliases.json)\n")
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_TLS_CERT_FILE (optional, requires CHAWRTD_TLS_KEY_FILE)\n")
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_TLS_KEY_FILE (optional, requires CHAWRTD_TLS_CERT_FILE)\n")
 }
@@ -63,6 +64,9 @@ func main() {
 	configPath := detectConfigPath()
 	cfg := config.Load()
 	server := httpapi.New(cfg.DefaultTimeout, cfg.Token)
+	if err := server.InitializeAliasStore(cfg.AliasFile); err != nil {
+		log.Fatalf("failed to initialize alias store (%s): %v", cfg.AliasFile, err)
+	}
 	wsScheme := "ws"
 	if cfg.TLSConfigured() {
 		wsScheme = "wss"
@@ -81,6 +85,7 @@ func main() {
 	log.Printf("chawrtd listening on %s", cfg.Addr)
 	log.Printf("chawrtd websocket endpoint %s://<host>%s/ws/clawwrt", wsScheme, cfg.Addr)
 	log.Printf("chawrtd token=%q", cfg.Token)
+	log.Printf("chawrtd alias file=%s", cfg.AliasFile)
 	if cfg.TLSConfigured() {
 		log.Printf("chawrtd TLS enabled with cert=%s key=%s", cfg.TLSCertFile, cfg.TLSKeyFile)
 		if err := http.ListenAndServeTLS(cfg.Addr, cfg.TLSCertFile, cfg.TLSKeyFile, server.Handler()); err != nil {

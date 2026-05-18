@@ -5,8 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 )
+
+var autoAliasPattern = regexp.MustCompile(`(?i)^wifi(\d+)$`)
 
 // AliasStore manages device alias persistence
 type AliasStore struct {
@@ -69,6 +74,44 @@ func (s *AliasStore) List() map[string]string {
 		result[k] = v
 	}
 	return result
+}
+
+// EnsureAutoAlias returns existing alias or creates/persists a new WiFiN alias.
+func (s *AliasStore) EnsureAutoAlias(deviceID string) (string, bool, error) {
+	s.mu.Lock()
+	if existing := s.aliases[deviceID]; existing != "" {
+		s.mu.Unlock()
+		return existing, false, nil
+	}
+
+	next := s.nextAutoAliasNumberLocked()
+	alias := fmt.Sprintf("WiFi%d", next)
+	s.aliases[deviceID] = alias
+	s.mu.Unlock()
+
+	if err := s.persist(); err != nil {
+		return "", false, err
+	}
+	return alias, true, nil
+}
+
+func (s *AliasStore) nextAutoAliasNumberLocked() int {
+	maxIdx := 0
+	for _, alias := range s.aliases {
+		trimmed := strings.TrimSpace(alias)
+		m := autoAliasPattern.FindStringSubmatch(trimmed)
+		if len(m) != 2 {
+			continue
+		}
+		idx, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		if idx > maxIdx {
+			maxIdx = idx
+		}
+	}
+	return maxIdx + 1
 }
 
 // load reads aliases from the file

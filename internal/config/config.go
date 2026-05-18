@@ -15,13 +15,15 @@ type Config struct {
 	TLSCertFile    string
 	TLSKeyFile     string
 	Token          string
+	AliasFile      string
 }
 
 // tomlConfig represents the structure of chawrtd.toml
 type tomlConfig struct {
-	Addr    string `toml:"addr"`
-	Timeout int    `toml:"timeout_seconds"`
-	TLS     struct {
+	Addr      string `toml:"addr"`
+	Timeout   int    `toml:"timeout_seconds"`
+	AliasFile string `toml:"alias_file"`
+	TLS       struct {
 		CertFile string `toml:"cert_file"`
 		KeyFile  string `toml:"key_file"`
 	} `toml:"tls"`
@@ -34,6 +36,7 @@ func Load() Config {
 		Addr:           ":8001",
 		DefaultTimeout: 120 * time.Second,
 		Token:          "clawwrt",
+		AliasFile:      "device-aliases.json",
 	}
 
 	// Try to load from TOML config file
@@ -58,6 +61,9 @@ func Load() Config {
 	}
 	if token := strings.TrimSpace(os.Getenv("CHAWRTD_TOKEN")); token != "" {
 		cfg.Token = token
+	}
+	if aliasFile := strings.TrimSpace(os.Getenv("CHAWRTD_ALIAS_FILE")); aliasFile != "" {
+		cfg.AliasFile = aliasFile
 	}
 
 	return cfg
@@ -97,8 +103,9 @@ func loadFromFile() (Config, error) {
 
 	// Build Config from parsed TOML
 	cfg := Config{
-		Addr:    ":8001", // default
-		Token:   "clawwrt",
+		Addr:        ":8001", // default
+		Token:       "clawwrt",
+		AliasFile:   "device-aliases.json",
 		TLSCertFile: tomlCfg.TLS.CertFile,
 		TLSKeyFile:  tomlCfg.TLS.KeyFile,
 	}
@@ -113,6 +120,9 @@ func loadFromFile() (Config, error) {
 	}
 	if tomlCfg.Token != "" {
 		cfg.Token = tomlCfg.Token
+	}
+	if tomlCfg.AliasFile != "" {
+		cfg.AliasFile = tomlCfg.AliasFile
 	}
 
 	return cfg, nil

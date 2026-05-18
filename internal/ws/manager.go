@@ -28,25 +28,25 @@ const (
 )
 
 var (
-	ErrDeviceNotFound      = errors.New("device not found")
-	ErrDeviceDisconnected  = errors.New("device disconnected")
-	ErrInvalidToken        = errors.New("invalid token")
-	ErrMessageTimeout      = errors.New("message timeout")
-	ErrInvalidMessage      = errors.New("invalid message")
-	ErrUnauthorized        = errors.New("unauthorized")
+	ErrDeviceNotFound     = errors.New("device not found")
+	ErrDeviceDisconnected = errors.New("device disconnected")
+	ErrInvalidToken       = errors.New("invalid token")
+	ErrMessageTimeout     = errors.New("message timeout")
+	ErrInvalidMessage     = errors.New("invalid message")
+	ErrUnauthorized       = errors.New("unauthorized")
 )
 
 // Manager manages WebSocket connections from clawwrt devices
 type Manager struct {
-	mu           sync.RWMutex
-	sessions     map[string]*DeviceSession
-	pending      map[string]map[interface{}]*PendingRequest
-	upgrader     websocket.Upgrader
-	token        string
+	mu             sync.RWMutex
+	sessions       map[string]*DeviceSession
+	pending        map[string]map[interface{}]*PendingRequest
+	upgrader       websocket.Upgrader
+	token          string
 	requestTimeout time.Duration
-	logger       Logger
-	broadcaster  *EventBroadcaster
-	aliases      *AliasStore
+	logger         Logger
+	broadcaster    *EventBroadcaster
+	aliases        *AliasStore
 
 	// Event handlers for device connections/disconnections
 	onConnect    func(*DeviceSession)
@@ -232,6 +232,19 @@ func (m *Manager) handleConnection(conn *websocket.Conn, remoteAddr string) {
 		return
 	}
 
+	alias := m.GetAlias(deviceID)
+	if alias == "" && m.aliases != nil {
+		autoAlias, created, aliasErr := m.aliases.EnsureAutoAlias(deviceID)
+		if aliasErr != nil {
+			m.logger.Warn(fmt.Sprintf("failed to persist alias for %s: %v", deviceID, aliasErr))
+		} else {
+			alias = autoAlias
+			if created {
+				m.logger.Info(fmt.Sprintf("assigned alias %q to device %s", alias, deviceID))
+			}
+		}
+	}
+
 	// Create device session
 	session := &DeviceSession{
 		DeviceID:    deviceID,
@@ -240,7 +253,7 @@ func (m *Manager) handleConnection(conn *websocket.Conn, remoteAddr string) {
 		RemoteAddr:  remoteAddr,
 		AuthMode:    parseAuthMode(msg.Mode),
 		ws:          &standardWebsocketConn{conn: conn},
-		Alias:       m.GetAlias(deviceID),
+		Alias:       alias,
 	}
 
 	if msg.Gateway != nil {
@@ -398,9 +411,9 @@ func (m *Manager) readMessage(conn *websocket.Conn) (Message, error) {
 // sendError sends an error response
 func (m *Manager) sendError(conn *websocket.Conn, reqID interface{}, err error) {
 	resp := Message{
-		ReqID:  reqID,
-		Error:  err.Error(),
-		Op:     "request_error",
+		ReqID: reqID,
+		Error: err.Error(),
+		Op:    "request_error",
 	}
 	conn.WriteJSON(resp)
 }
@@ -437,9 +450,9 @@ func (m *Manager) SendCommand(deviceID string, op string, commandData map[string
 	log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - generated request", deviceID, op, reqID)
 
 	msg := Message{
-		Op:      op,
-		ReqID:   reqID,
-		Data:    commandData,
+		Op:    op,
+		ReqID: reqID,
+		Data:  commandData,
 	}
 
 	// Register pending request
