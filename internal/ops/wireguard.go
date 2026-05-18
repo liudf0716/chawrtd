@@ -496,21 +496,40 @@ func VerifyWireGuardServer(req VerifyWireGuardRequest, timeout time.Duration) (R
 			return Result{}, err
 		}
 
+		routeOutput, _ := RunShell(5*time.Second, "ip -4 route get "+ShellQuote(t)+" 2>/dev/null || true")
+		routeViaWG0 := strings.Contains(routeOutput, " dev wg0")
+
 		reachable := false
 		finalOutput := ""
-		for i := 0; i < 5; i++ {
-			out, pingErr := RunShell(5*time.Second, "ping -c 1 -W 1 "+ShellQuote(t))
-			finalOutput = out
-			if pingErr == nil {
-				reachable = true
-				break
+		if routeViaWG0 {
+			for i := 0; i < 5; i++ {
+				out, pingErr := RunShell(5*time.Second, "ping -I wg0 -c 1 -W 1 "+ShellQuote(t))
+				finalOutput = out
+				if pingErr == nil {
+					reachable = true
+					break
+				}
 			}
 		}
 
+		confidence := "failed"
+		message := "target is not routed via wg0"
+		if reachable {
+			confidence = "confirmed"
+			message = "ICMP echo reply received via wg0"
+		} else if routeViaWG0 {
+			confidence = "inconclusive"
+			message = "route via wg0 exists but ICMP echo failed; target may block ping"
+		}
+
 		results = append(results, map[string]any{
-			"target":    t,
-			"reachable": reachable,
-			"output":    finalOutput,
+			"target":      t,
+			"reachable":   reachable,
+			"output":      finalOutput,
+			"route":       strings.TrimSpace(routeOutput),
+			"routeViaWg0": routeViaWG0,
+			"confidence":  confidence,
+			"message":     message,
 		})
 	}
 
