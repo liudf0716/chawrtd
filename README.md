@@ -35,6 +35,21 @@ go run ./cmd/chawrtd --help
 go run ./cmd/chawrtd --version
 ```
 
+Build binary with version metadata:
+
+```bash
+make build
+./bin/chawrtd --version
+```
+
+By default, VERSION is derived from git describe (tags/commit), and commit/time are embedded automatically.
+
+Override build metadata (optional):
+
+```bash
+make build VERSION=1.2.3
+```
+
 Environment variables:
 
 - `CHAWRTD_ADDR` (default `:8001`)
