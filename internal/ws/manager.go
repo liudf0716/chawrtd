@@ -449,16 +449,18 @@ func (m *Manager) SendCommand(deviceID string, op string, commandData map[string
 	reqID := generateReqID()
 	log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - generated request", deviceID, op, reqID)
 
-	// Build a flat message: op + req_id at top level, commandData fields merged in.
-	// clawwrt handlers unmarshal the full message directly, so payload fields must
-	// be at the top level, not nested under "data".
-	flatMsg := map[string]any{
-		"op":     op,
-		"req_id": reqID,
+	msg := Message{
+		Op:    op,
+		ReqID: reqID,
+		Data:  commandData,
 	}
-	for k, v := range commandData {
-		flatMsg[k] = v
-	}
+	log.Printf(
+		"chawrtd SendCommand: deviceId=%q op=%q reqID=%v - ws msg.data=%v",
+		deviceID,
+		op,
+		reqID,
+		SanitizeDataForLog(msg.Data),
+	)
 
 	// Register pending request
 	m.mu.Lock()
@@ -488,7 +490,7 @@ func (m *Manager) SendCommand(deviceID string, op string, commandData map[string
 	}()
 
 	// Send command
-	if err := session.ws.SendJSON(flatMsg); err != nil {
+	if err := session.ws.SendJSON(msg); err != nil {
 		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - send failed: %v", deviceID, op, reqID, err)
 		return nil, fmt.Errorf("failed to send command: %w", err)
 	}

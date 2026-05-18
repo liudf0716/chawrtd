@@ -200,6 +200,12 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+		log.Printf(
+			"chawrtd POST /v1/device/%s/%s: decoded requestData=%v",
+			deviceID,
+			operation,
+			ws.SanitizeDataForLog(requestData),
+		)
 
 		log.Printf("chawrtd POST /v1/device/%s/%s: sending command with timeout=%v", deviceID, operation, s.defaultTimeout)
 		result, err := s.wsManager.SendCommand(deviceID, operation, requestData, s.defaultTimeout)
