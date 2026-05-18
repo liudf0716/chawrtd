@@ -28,10 +28,19 @@ It is designed to migrate long-running and host-level operations out of `opencla
 go run ./cmd/chawrtd
 ```
 
+Show help/version:
+
+```bash
+go run ./cmd/chawrtd --help
+go run ./cmd/chawrtd --version
+```
+
 Environment variables:
 
 - `CHAWRTD_ADDR` (default `:8001`)
 - `CHAWRTD_DEFAULT_TIMEOUT_SECONDS` (default `120`)
+- `CHAWRTD_CONFIG_FILE` (optional explicit TOML path)
+- `CHAWRTD_TOKEN` (default `clawwrt`)
 - `CHAWRTD_TLS_CERT_FILE` (optional PEM certificate file; when set with key file, server serves HTTPS/WSS)
 - `CHAWRTD_TLS_KEY_FILE` (optional PEM private key file; must be set together with cert file)
 

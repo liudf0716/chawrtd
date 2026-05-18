@@ -1,26 +1,66 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 
 	"chawrtd/internal/config"
 	"chawrtd/internal/httpapi"
+	"chawrtd/internal/version"
 )
 
-func main() {
-	// Detect which config file was loaded
+func printUsage() {
+	fmt.Fprintf(os.Stdout, "Usage: chawrtd [options]\n\n")
+	fmt.Fprintf(os.Stdout, "Options:\n")
+	fmt.Fprintf(os.Stdout, "  -h, --help       Show help\n")
+	fmt.Fprintf(os.Stdout, "  -v, --version    Show version\n\n")
+	fmt.Fprintf(os.Stdout, "Environment variables:\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_ADDR (default :8001)\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_DEFAULT_TIMEOUT_SECONDS (default 120)\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_CONFIG_FILE (optional, defaults: ./chawrtd.toml or /etc/chawrtd/chawrtd.toml)\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_TOKEN (default clawwrt)\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_TLS_CERT_FILE (optional, requires CHAWRTD_TLS_KEY_FILE)\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_TLS_KEY_FILE (optional, requires CHAWRTD_TLS_CERT_FILE)\n")
+}
+
+func detectConfigPath() string {
 	configPath := os.Getenv("CHAWRTD_CONFIG_FILE")
-	if configPath == "" {
-		for _, path := range []string{"./chawrtd.toml", "/etc/chawrtd/chawrtd.toml"} {
-			if _, err := os.Stat(path); err == nil {
-				configPath = path
-				break
-			}
+	if configPath != "" {
+		return configPath
+	}
+
+	for _, path := range []string{"./chawrtd.toml", "/etc/chawrtd/chawrtd.toml"} {
+		if _, err := os.Stat(path); err == nil {
+			return path
 		}
 	}
 
+	return ""
+}
+
+func main() {
+	showVersion := flag.Bool("version", false, "show version")
+	showVersionShort := flag.Bool("v", false, "show version")
+	showHelp := flag.Bool("help", false, "show help")
+	showHelpShort := flag.Bool("h", false, "show help")
+
+	flag.Usage = printUsage
+	flag.Parse()
+
+	if *showHelp || *showHelpShort {
+		printUsage()
+		return
+	}
+
+	if *showVersion || *showVersionShort {
+		version.PrintVersion()
+		return
+	}
+
+	configPath := detectConfigPath()
 	cfg := config.Load()
 	server := httpapi.New(cfg.DefaultTimeout, cfg.Token)
 	wsScheme := "ws"
@@ -37,6 +77,7 @@ func main() {
 	} else {
 		log.Printf("chawrtd config: using environment variables and defaults")
 	}
+	log.Printf("chawrtd version %s", version.Version)
 	log.Printf("chawrtd listening on %s", cfg.Addr)
 	log.Printf("chawrtd websocket endpoint %s://<host>%s/ws/clawwrt", wsScheme, cfg.Addr)
 	log.Printf("chawrtd token=%q", cfg.Token)
