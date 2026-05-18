@@ -1,0 +1,63 @@
+# chawrtd Configuration File
+# Save this as chawrtd.toml in the same directory as the chawrtd binary
+# or in /etc/chawrtd/chawrtd.toml for system-wide configuration
+
+# Listen address (host:port)
+# Default: ":8001"
+addr = ":8001"
+
+# WebSocket connection timeout in seconds
+# Default: 120
+timeout_seconds = 120
+
+# Authentication token for WebSocket connections
+# clawwrt must send this token to connect
+# Default: "clawwrt"
+token = "clawwrt"
+
+# TLS/HTTPS Configuration (optional)
+# Uncomment and set both cert_file and key_file to enable HTTPS
+[tls]
+# Path to TLS certificate file (PEM format)
+# cert_file = "/etc/chawrtd/certs/server.crt"
+
+# Path to TLS private key file (PEM format)
+# key_file = "/etc/chawrtd/certs/server.key"
+
+# Example configurations:
+
+# ========================================
+# Example 1: Simple HTTP setup (default)
+# ========================================
+# addr = ":8001"
+# timeout_seconds = 120
+# token = "clawwrt"
+
+# ========================================
+# Example 2: Custom HTTPS setup
+# ========================================
+# addr = ":8443"
+# timeout_seconds = 120
+# token = "my-secret-token-12345"
+# 
+# [tls]
+# cert_file = "/etc/chawrtd/certs/server.crt"
+# key_file = "/etc/chawrtd/certs/server.key"
+
+# ========================================
+# Example 3: OpenWrt Router Setup
+# ========================================
+# addr = ":8001"
+# timeout_seconds = 60
+# token = "openwrt-secure-token"
+#
+# [tls]
+# cert_file = "/etc/ssl/certs/chawrtd.crt"
+# key_file = "/etc/ssl/private/chawrtd.key"
+
+# ========================================
+# Configuration Priority (highest to lowest):
+# 1. Environment variables (CHAWRTD_ADDR, CHAWRTD_TOKEN, etc.)
+# 2. Config file (./chawrtd.toml or /etc/chawrtd/chawrtd.toml)
+# 3. Default values
+# ========================================

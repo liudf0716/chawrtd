@@ -24,11 +24,11 @@ type Server struct {
 	mu             sync.RWMutex
 }
 
-func New(defaultTimeout time.Duration) *Server {
+func New(defaultTimeout time.Duration, token string) *Server {
 	s := &Server{
 		defaultTimeout: defaultTimeout,
 		mux:            http.NewServeMux(),
-		wsManager:      ws.NewManager("clawwrt", &ws.SimpleLogger{}),
+		wsManager:      ws.NewManager(token, &ws.SimpleLogger{}),
 		eventCallbacks: make(map[string][]string),
 		eventStreams:   make(map[chan *ws.DeviceEvent]struct{}),
 	}
