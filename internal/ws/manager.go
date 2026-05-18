@@ -333,13 +333,15 @@ func (m *Manager) handleMessage(session *DeviceSession, msg Message) {
 	if op == "" {
 		op = msg.Type
 	}
+	dataType := responseDataType(msg)
 
 	session.LastSeenAt = time.Now()
-	log.Printf("chawrtd websocket message from device=%q op=%q reqID=%v", session.DeviceID, op, msg.ReqID)
+	log.Printf("chawrtd websocket message from device=%q op=%q data_type=%q reqID=%v", session.DeviceID, op, dataType, msg.ReqID)
 
-	// Handle response messages
-	if isResponse(op) {
-		log.Printf("chawrtd websocket response from device=%q reqID=%v", session.DeviceID, msg.ReqID)
+	// Handle response messages. clawwrt may send response envelopes that have
+	// req_id + response + data but no op/type fields.
+	if isResponseMessage(op, msg) {
+		log.Printf("chawrtd websocket response from device=%q reqID=%v response=%v data_type=%q", session.DeviceID, msg.ReqID, msg.Response, dataType)
 		m.handleResponse(session.DeviceID, msg)
 		return
 	}
@@ -551,6 +553,33 @@ func toMap(v interface{}) map[string]any {
 
 func isResponse(op string) bool {
 	return op == "request_error" || (len(op) > 9 && op[len(op)-9:] == "_response") || (len(op) > 6 && op[len(op)-6:] == "_error")
+}
+
+func responseDataType(msg Message) string {
+	if msg.Data == nil {
+		return ""
+	}
+	t, _ := msg.Data["type"].(string)
+	return t
+}
+
+func isResponseMessage(op string, msg Message) bool {
+	if isResponse(op) {
+		return true
+	}
+
+	// clawwrt command replies commonly use an envelope:
+	// {"req_id": "...", "response": "200", "data": {...}}
+	// with empty op/type.
+	if msg.ReqID == nil {
+		return false
+	}
+
+	if msg.Response != nil {
+		return true
+	}
+
+	return op == ""
 }
 
 func isEventMessage(op string) bool {
