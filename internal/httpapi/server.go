@@ -167,17 +167,23 @@ func (s *Server) registerRoutes() {
 
 // handleDeviceCommand routes commands to devices
 func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
-	// Parse path: /v1/device/{deviceId}/{operation}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/device/"), "/")
-	if len(parts) < 2 {
+	trimmed := strings.TrimPrefix(r.URL.Path, "/v1/device/")
+	parts := strings.Split(trimmed, "/")
+	deviceID := ""
+	operation := ""
+	if len(parts) >= 1 {
+		deviceID = parts[0]
+	}
+	if len(parts) >= 2 {
+		operation = parts[1]
+	}
+	log.Printf("chawrtd device command: method=%s deviceId=%q operation=%q", r.Method, deviceID, operation)
+
+	if deviceID == "" {
 		log.Printf("chawrtd device command: invalid path=%q", r.URL.Path)
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid device path"})
 		return
 	}
-
-	deviceID := parts[0]
-	operation := parts[1]
-	log.Printf("chawrtd device command: method=%s deviceId=%q operation=%q", r.Method, deviceID, operation)
 
 	if r.Method == http.MethodGet {
 		// Get device info
@@ -193,6 +199,12 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodPost {
+		if operation == "" {
+			log.Printf("chawrtd POST /v1/device/%s: missing operation", deviceID)
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid device path"})
+			return
+		}
+
 		// Send command to device
 		var requestData map[string]any
 		if err := decodeJSON(r, &requestData); err != nil {
