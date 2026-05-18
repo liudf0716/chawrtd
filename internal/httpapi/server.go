@@ -60,6 +60,11 @@ func (s *Server) InitializeAliasStore(filePath string) error {
 
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Log all HTTP requests (at debug level for non-websocket)
+		if r.URL.Path != "/ws/clawwrt" {
+			log.Printf("chawrtd http request method=%s path=%s remote=%s query=%q", r.Method, r.URL.Path, r.RemoteAddr, r.URL.RawQuery)
+		}
+
 		// WebSocket upgrade for device connections
 		if r.URL.Path == "/ws/clawwrt" {
 			connectionHeader := r.Header.Get("Connection")
@@ -165,20 +170,24 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	// Parse path: /v1/device/{deviceId}/{operation}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/device/"), "/")
 	if len(parts) < 2 {
+		log.Printf("chawrtd device command: invalid path=%q", r.URL.Path)
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid device path"})
 		return
 	}
 
 	deviceID := parts[0]
 	operation := parts[1]
+	log.Printf("chawrtd device command: method=%s deviceId=%q operation=%q", r.Method, deviceID, operation)
 
 	if r.Method == http.MethodGet {
 		// Get device info
 		device := s.wsManager.GetDevice(deviceID)
 		if device == nil {
+			log.Printf("chawrtd GET /v1/device/%s: device not found", deviceID)
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "device not found"})
 			return
 		}
+		log.Printf("chawrtd GET /v1/device/%s: found", deviceID)
 		writeJSON(w, http.StatusOK, device)
 		return
 	}
@@ -187,20 +196,25 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		// Send command to device
 		var payload map[string]any
 		if err := decodeJSON(r, &payload); err != nil {
+			log.Printf("chawrtd POST /v1/device/%s/%s: decode error: %v", deviceID, operation, err)
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
 
+		log.Printf("chawrtd POST /v1/device/%s/%s: sending command with timeout=%v", deviceID, operation, s.defaultTimeout)
 		result, err := s.wsManager.SendCommand(deviceID, operation, payload, s.defaultTimeout)
 		if err != nil {
 			if errors.Is(err, ws.ErrDeviceNotFound) {
+				log.Printf("chawrtd POST /v1/device/%s/%s: device not found", deviceID, operation)
 				writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
 				return
 			}
+			log.Printf("chawrtd POST /v1/device/%s/%s: command error: %v", deviceID, operation, err)
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
 
+		log.Printf("chawrtd POST /v1/device/%s/%s: command success", deviceID, operation)
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -215,8 +229,33 @@ func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) error
 	}
 
 	devices := s.wsManager.ListDevices()
+	
+	deviceIDs := make([]string, len(devices))
+	for i, dev := range devices {
+		deviceIDs[i] = dev.DeviceID
+	}
+	log.Printf("chawrtd GET /v1/devices: returning %d connected devices: %v", len(devices), deviceIDs)
+
+	// Convert DeviceSession to map for JSON response
+	var devicesList []map[string]any
+	for _, session := range devices {
+		deviceMap := map[string]any{
+			"device_id":    session.DeviceID,
+			"connected_at": session.ConnectedAt.UnixMilli(),
+			"last_seen_at": session.LastSeenAt.UnixMilli(),
+			"remote_addr":  session.RemoteAddr,
+		}
+		if session.Alias != "" {
+			deviceMap["alias"] = session.Alias
+		}
+		if session.DeviceInfo != nil {
+			deviceMap["device_info"] = session.DeviceInfo
+		}
+		devicesList = append(devicesList, deviceMap)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"devices": devices,
+		"devices": devicesList,
 		"count":   len(devices),
 	})
 	return nil

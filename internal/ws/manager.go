@@ -335,15 +335,18 @@ func (m *Manager) handleMessage(session *DeviceSession, msg Message) {
 	}
 
 	session.LastSeenAt = time.Now()
+	log.Printf("chawrtd websocket message from device=%q op=%q reqID=%v", session.DeviceID, op, msg.ReqID)
 
 	// Handle response messages
 	if isResponse(op) {
+		log.Printf("chawrtd websocket response from device=%q reqID=%v", session.DeviceID, msg.ReqID)
 		m.handleResponse(session.DeviceID, msg)
 		return
 	}
 
 	// Handle event messages (device push events)
 	if isEventMessage(op) {
+		log.Printf("chawrtd device event from=%q op=%q", session.DeviceID, op)
 		m.broadcaster.Emit(context.Background(), &DeviceEvent{
 			Op:       op,
 			DeviceID: session.DeviceID,
@@ -368,14 +371,17 @@ func (m *Manager) handleResponse(deviceID string, msg Message) {
 
 	pending, ok := m.pending[deviceID][reqID]
 	if !ok {
+		log.Printf("chawrtd response from device=%q reqID=%v: no pending request", deviceID, reqID)
 		return
 	}
 
+	log.Printf("chawrtd response from device=%q reqID=%v: found pending request", deviceID, reqID)
 	delete(m.pending[deviceID], reqID)
 
 	select {
 	case pending.ReqChan <- msg:
 	case <-time.After(100 * time.Millisecond):
+		log.Printf("chawrtd response from device=%q reqID=%v: response channel blocked", deviceID, reqID)
 	}
 }
 
@@ -407,11 +413,14 @@ func (m *Manager) sendResponse(conn *websocket.Conn, reqID interface{}, data map
 
 // SendCommand sends a command to a device and waits for response
 func (m *Manager) SendCommand(deviceID string, op string, payload map[string]any, timeout time.Duration) (map[string]any, error) {
+	log.Printf("chawrtd SendCommand: deviceId=%q op=%q timeout=%v", deviceID, op, timeout)
+
 	m.mu.RLock()
 	session, ok := m.sessions[deviceID]
 	m.mu.RUnlock()
 
 	if !ok {
+		log.Printf("chawrtd SendCommand: deviceId=%q op=%q - device not found", deviceID, op)
 		return nil, ErrDeviceNotFound
 	}
 
@@ -422,6 +431,7 @@ func (m *Manager) SendCommand(deviceID string, op string, payload map[string]any
 	}
 
 	reqID := generateReqID()
+	log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - generated request", deviceID, op, reqID)
 
 	msg := Message{
 		Op:      op,
@@ -458,20 +468,27 @@ func (m *Manager) SendCommand(deviceID string, op string, payload map[string]any
 
 	// Send command
 	if err := session.ws.SendJSON(msg); err != nil {
+		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - send failed: %v", deviceID, op, reqID, err)
 		return nil, fmt.Errorf("failed to send command: %w", err)
 	}
+
+	log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - sent, waiting for response (timeout=%v)", deviceID, op, reqID, timeout)
 
 	// Wait for response or timeout
 	select {
 	case resp := <-reqChan:
 		if respMsg, ok := resp.(Message); ok {
 			if respMsg.Error != "" {
+				log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response error: %s", deviceID, op, reqID, respMsg.Error)
 				return nil, errors.New(respMsg.Error)
 			}
+			log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response success", deviceID, op, reqID)
 			return respMsg.Data, nil
 		}
+		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - invalid response message", deviceID, op, reqID)
 		return nil, ErrInvalidMessage
 	case <-timer.C:
+		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - timeout after %v", deviceID, op, reqID, timeout)
 		return nil, ErrMessageTimeout
 	}
 }
