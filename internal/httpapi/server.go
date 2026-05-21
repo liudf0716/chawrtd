@@ -368,13 +368,25 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}()
 
-	_, _ = w.Write([]byte(": connected\n\n"))
+	// Keep the stream alive during idle periods so clients do not get dropped by
+	// intermediary idle timeouts (reverse proxies, NAT, etc.).
+	heartbeatTicker := time.NewTicker(25 * time.Second)
+	defer heartbeatTicker.Stop()
+
+	if _, err := w.Write([]byte(": connected\n\n")); err != nil {
+		return
+	}
 	flusher.Flush()
 
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeatTicker.C:
+			if _, err := w.Write([]byte(": heartbeat\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
 		case event, ok := <-stream:
 			if !ok {
 				return
@@ -383,10 +395,18 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			_, _ = w.Write([]byte("event: device\n"))
-			_, _ = w.Write([]byte("data: "))
-			_, _ = w.Write(payload)
-			_, _ = w.Write([]byte("\n\n"))
+			if _, err := w.Write([]byte("event: device\n")); err != nil {
+				return
+			}
+			if _, err := w.Write([]byte("data: ")); err != nil {
+				return
+			}
+			if _, err := w.Write(payload); err != nil {
+				return
+			}
+			if _, err := w.Write([]byte("\n\n")); err != nil {
+				return
+			}
 			flusher.Flush()
 		}
 	}

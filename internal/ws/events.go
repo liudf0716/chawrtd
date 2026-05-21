@@ -13,6 +13,7 @@ type EventListener func(*DeviceEvent)
 type DeviceEvent struct {
 	Op       string                 `json:"op"`
 	DeviceID string                 `json:"device_id"`
+	Alias    string                 `json:"alias,omitempty"`
 	Data     map[string]interface{} `json:"data,omitempty"`
 	Time     int64                  `json:"time"`
 }

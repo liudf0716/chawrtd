@@ -366,6 +366,7 @@ func (m *Manager) handleMessage(session *DeviceSession, msg Message) {
 		m.broadcaster.Emit(context.Background(), &DeviceEvent{
 			Op:       op,
 			DeviceID: session.DeviceID,
+			Alias:    session.Alias,
 			Data:     msg.Data,
 			Time:     time.Now().UnixMilli(),
 		})
