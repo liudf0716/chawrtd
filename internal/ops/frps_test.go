@@ -54,3 +54,44 @@ func TestRedactFRPSToken(t *testing.T) {
 		t.Fatalf("redactFRPSToken() = %q, want %q", got, want)
 	}
 }
+
+func TestVerifyFRPSDetectsTcpListener(t *testing.T) {
+	originalRunShell := runShell
+	t.Cleanup(func() {
+		runShell = originalRunShell
+	})
+
+	var capturedScript string
+	runShell = func(timeout time.Duration, script string) (string, error) {
+		capturedScript = script
+		return strings.Join([]string{
+			"STATUS=LISTENING",
+			"PROTOCOL=tcp",
+			"PORT=7070",
+			"MATCHES_BEGIN",
+			"tcp   LISTEN 0      4096   0.0.0.0:7070   0.0.0.0:*",
+			"MATCHES_END",
+		}, "\n"), nil
+	}
+
+	result, err := VerifyFRPS(VerifyFRPSRequest{Protocol: "tcp", Port: 7070}, time.Second)
+	if err != nil {
+		t.Fatalf("VerifyFRPS returned error: %v", err)
+	}
+
+	if !strings.Contains(capturedScript, "ss -lntH \"sport = :7070\"") {
+		t.Fatalf("expected tcp ss filter in script, got: %s", capturedScript)
+	}
+	if result.Summary != "Intranet-penetration service listener is active" {
+		t.Fatalf("unexpected summary: %s", result.Summary)
+	}
+	if !strings.Contains(result.Output, "STATUS=LISTENING") {
+		t.Fatalf("expected listening output, got: %s", result.Output)
+	}
+}
+
+func TestVerifyFRPSRejectsInvalidProtocol(t *testing.T) {
+	if _, err := VerifyFRPS(VerifyFRPSRequest{Protocol: "icmp", Port: 7070}, time.Second); err == nil {
+		t.Fatal("expected error for invalid protocol")
+	}
+}

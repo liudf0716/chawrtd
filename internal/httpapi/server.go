@@ -155,6 +155,7 @@ func (s *Server) registerRoutes() {
 
 	s.mux.HandleFunc("/v1/frps/deploy", s.wrapJSON(s.handleFRPSDeploy))
 	s.mux.HandleFunc("/v1/frps/status", s.wrapJSON(s.handleFRPSStatus))
+	s.mux.HandleFunc("/v1/frps/verify", s.wrapJSON(s.handleFRPSVerify))
 	s.mux.HandleFunc("/v1/frps/reset", s.wrapJSON(s.handleFRPSReset))
 
 	s.mux.HandleFunc("/v1/vps/public-ip", s.wrapJSON(s.handleVPSPublicIP))
@@ -560,6 +561,22 @@ func (s *Server) handleFRPSStatus(w http.ResponseWriter, r *http.Request) error 
 		return errors.New("method not allowed")
 	}
 	res, err := ops.GetFRPSStatus(s.defaultTimeout)
+	if err != nil {
+		return err
+	}
+	writeJSON(w, http.StatusOK, res)
+	return nil
+}
+
+func (s *Server) handleFRPSVerify(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodPost {
+		return errors.New("method not allowed")
+	}
+	var req ops.VerifyFRPSRequest
+	if err := decodeJSON(r, &req); err != nil {
+		return err
+	}
+	res, err := ops.VerifyFRPS(req, s.defaultTimeout)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,11 @@ type DeployFRPSRequest struct {
 	Token string `json:"token"`
 }
 
+type VerifyFRPSRequest struct {
+	Protocol string `json:"protocol"`
+	Port     int    `json:"port"`
+}
+
 func DeployFRPS(req DeployFRPSRequest, timeout time.Duration) (Result, error) {
 	if req.Port <= 0 || req.Port > 65535 {
 		return Result{}, fmt.Errorf("port must be between 1 and 65535")
@@ -126,6 +131,64 @@ echo "PORTS_END"
 	return Result{
 		Summary: "Fetched FRPS status",
 		Output:  redactFRPSToken(output),
+	}, nil
+}
+
+func VerifyFRPS(req VerifyFRPSRequest, timeout time.Duration) (Result, error) {
+	proto := strings.ToLower(strings.TrimSpace(req.Protocol))
+	if proto != "tcp" && proto != "udp" {
+		return Result{}, fmt.Errorf("protocol must be tcp or udp")
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		return Result{}, fmt.Errorf("port must be between 1 and 65535")
+	}
+
+	script := fmt.Sprintf(`set -euo pipefail
+proto=%s
+port=%d
+
+case "$proto" in
+  tcp)
+    output=$(ss -lntH "sport = :%d" 2>/dev/null || true)
+    ;;
+  udp)
+    output=$(ss -lnuH "sport = :%d" 2>/dev/null || true)
+    ;;
+esac
+
+if [ -n "$output" ]; then
+  echo "STATUS=LISTENING"
+  echo "PROTOCOL=$proto"
+  echo "PORT=$port"
+  echo "MATCHES_BEGIN"
+  echo "$output"
+  echo "MATCHES_END"
+else
+  echo "STATUS=NOT_LISTENING"
+  echo "PROTOCOL=$proto"
+  echo "PORT=$port"
+fi
+`, ShellQuote(proto), req.Port, req.Port, req.Port)
+
+	output, err := runShell(timeout, script)
+	if err != nil {
+		return Result{}, err
+	}
+
+	listening := strings.Contains(output, "STATUS=LISTENING")
+	summary := "Intranet-penetration service listener not found"
+	if listening {
+		summary = "Intranet-penetration service listener is active"
+	}
+
+	return Result{
+		Summary: summary,
+		Output:  output,
+		Data: map[string]any{
+			"protocol":  proto,
+			"port":      req.Port,
+			"listening":  listening,
+		},
 	}, nil
 }
 

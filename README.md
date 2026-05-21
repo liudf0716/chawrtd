@@ -100,6 +100,14 @@ Status:
 curl -s http://127.0.0.1:8001/v1/frps/status
 ```
 
+Verify:
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/v1/frps/verify \
+  -H 'Content-Type: application/json' \
+  -d '{"protocol":"tcp","port":7070}'
+```
+
 Reset:
 
 ```bash
