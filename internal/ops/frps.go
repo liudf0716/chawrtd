@@ -27,7 +27,7 @@ func DeployFRPS(req DeployFRPSRequest, timeout time.Duration) (Result, error) {
 		return Result{}, fmt.Errorf("token is required")
 	}
 
-	token := ShellQuote(strings.TrimSpace(req.Token))
+	token := strings.TrimSpace(req.Token)
 	script := fmt.Sprintf(`set -euo pipefail
 arch=$(uname -m)
 case "$arch" in
@@ -50,10 +50,10 @@ if ! command -v nwct-server >/dev/null 2>&1; then
 fi
 
 sudo mkdir -p /etc/nwct
-cat <<EOF | sudo tee /etc/nwct/nwct-server.toml >/dev/null
+cat <<'EOF' | sudo tee /etc/nwct/nwct-server.toml >/dev/null
 bindPort = %d
 auth.method = "token"
-auth.token = %s
+auth.token = %q
 EOF
 
 cat <<'EOF' | sudo tee /etc/systemd/system/nwct-server.service >/dev/null
