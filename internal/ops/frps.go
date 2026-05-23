@@ -5,9 +5,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/BurntSushi/toml"
 )
 
 var runShell = RunShell
+var getVpsPublicIP = GetVpsPublicIP
 
 type DeployFRPSRequest struct {
 	Port  int    `json:"port"`
@@ -17,6 +20,47 @@ type DeployFRPSRequest struct {
 type VerifyFRPSRequest struct {
 	Protocol string `json:"protocol"`
 	Port     int    `json:"port"`
+}
+
+type frpsServerConfig struct {
+	BindPort int `toml:"bindPort"`
+	Auth     struct {
+		Method string `toml:"method"`
+		Token  string `toml:"token"`
+	} `toml:"auth"`
+}
+
+func parseFRPSServerConfig(content string) (frpsServerConfig, error) {
+	var cfg frpsServerConfig
+	if strings.TrimSpace(content) == "" {
+		return cfg, nil
+	}
+	if err := toml.Unmarshal([]byte(content), &cfg); err != nil {
+		return frpsServerConfig{}, err
+	}
+	return cfg, nil
+}
+
+func extractOutputSection(output, beginMarker, endMarker string) string {
+	start := strings.Index(output, beginMarker)
+	if start < 0 {
+		return ""
+	}
+	start += len(beginMarker)
+	end := strings.Index(output[start:], endMarker)
+	if end < 0 {
+		return strings.TrimSpace(output[start:])
+	}
+	return strings.TrimSpace(output[start : start+end])
+}
+
+func extractOutputValue(output, prefix string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
 }
 
 func DeployFRPS(req DeployFRPSRequest, timeout time.Duration) (Result, error) {
@@ -94,6 +138,7 @@ sudo systemctl status --no-pager --lines=20 nwct-server || true
 }
 
 func GetFRPSStatus(timeout time.Duration) (Result, error) {
+	configPath := "/etc/nwct/nwct-server.toml"
 	script := `set -euo pipefail
 config="/etc/nwct/nwct-server.toml"
 service_state=$(systemctl is-active nwct-server 2>/dev/null || true)
@@ -128,9 +173,53 @@ echo "PORTS_END"
 		return Result{}, err
 	}
 
+	configSection := extractOutputSection(output, "CONFIG_BEGIN", "CONFIG_END")
+	portsSection := extractOutputSection(output, "PORTS_BEGIN", "PORTS_END")
+	serviceState := extractOutputValue(output, "SERVICE_STATE=")
+	configExists := strings.EqualFold(extractOutputValue(output, "CONFIG_EXISTS="), "yes")
+	parsedConfig, err := parseFRPSServerConfig(configSection)
+	if err != nil {
+		return Result{}, fmt.Errorf("failed to parse nwct server config: %w", err)
+	}
+
+	publicIPResult, publicIPErr := getVpsPublicIP(timeout)
+	publicIP := ""
+	if publicIPErr == nil {
+		if data := publicIPResult.Data; data != nil {
+			if value, ok := data["publicIp"].(string); ok {
+				publicIP = strings.TrimSpace(value)
+			}
+		}
+	}
+
+	data := map[string]any{
+		"serviceState": serviceState,
+		"configExists": configExists,
+		"configPath":   configPath,
+		"bindPort":     parsedConfig.BindPort,
+		"token":        parsedConfig.Auth.Token,
+		"ports":        portsSection,
+	}
+	if publicIP != "" {
+		data["publicIp"] = publicIP
+		data["publicIpSource"] = "curl https://ifconfig.me/ip"
+	}
+	if publicIPErr != nil {
+		data["publicIpError"] = publicIPErr.Error()
+	}
+
+	resultOutput := redactFRPSToken(output)
+	if publicIP != "" {
+		resultOutput += "\nPUBLIC_IP=" + publicIP
+	}
+	if publicIPErr != nil {
+		resultOutput += "\nPUBLIC_IP_ERROR=" + publicIPErr.Error()
+	}
+
 	return Result{
 		Summary: "Fetched FRPS status",
-		Output:  redactFRPSToken(output),
+		Output:  resultOutput,
+		Data:    data,
 	}, nil
 }
 
@@ -187,7 +276,7 @@ fi
 		Data: map[string]any{
 			"protocol":  proto,
 			"port":      req.Port,
-			"listening":  listening,
+			"listening": listening,
 		},
 	}, nil
 }

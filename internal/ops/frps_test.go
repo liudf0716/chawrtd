@@ -8,8 +8,10 @@ import (
 
 func TestGetFRPSStatusUsesPermissionSafeConfigRead(t *testing.T) {
 	originalRunShell := runShell
+	originalGetVpsPublicIP := getVpsPublicIP
 	t.Cleanup(func() {
 		runShell = originalRunShell
+		getVpsPublicIP = originalGetVpsPublicIP
 	})
 
 	var capturedScript string
@@ -28,6 +30,15 @@ func TestGetFRPSStatusUsesPermissionSafeConfigRead(t *testing.T) {
 			"PORTS_END",
 		}, "\n"), nil
 	}
+	getVpsPublicIP = func(timeout time.Duration) (Result, error) {
+		return Result{
+			Summary: "Detected VPS public IPv4 address",
+			Output:  "203.0.113.42",
+			Data: map[string]any{
+				"publicIp": "203.0.113.42",
+			},
+		}, nil
+	}
 
 	result, err := GetFRPSStatus(time.Second)
 	if err != nil {
@@ -42,6 +53,18 @@ func TestGetFRPSStatusUsesPermissionSafeConfigRead(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "[REDACTED]") {
 		t.Fatalf("expected redacted token marker in output, got: %s", result.Output)
+	}
+	if got, ok := result.Data["bindPort"].(int); !ok || got != 7070 {
+		t.Fatalf("expected bindPort 7070 in data, got %#v", result.Data["bindPort"])
+	}
+	if got, ok := result.Data["token"].(string); !ok || got != "secret-token" {
+		t.Fatalf("expected token in data, got %#v", result.Data["token"])
+	}
+	if got, ok := result.Data["publicIp"].(string); !ok || got != "203.0.113.42" {
+		t.Fatalf("expected publicIp in data, got %#v", result.Data["publicIp"])
+	}
+	if got, ok := result.Data["configExists"].(bool); !ok || !got {
+		t.Fatalf("expected configExists true in data, got %#v", result.Data["configExists"])
 	}
 }
 

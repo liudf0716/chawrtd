@@ -10,9 +10,9 @@ import (
 var wireGuardPublicKeyPattern = regexp.MustCompile(`^[A-Za-z0-9+/]{43}=$`)
 
 type DeployWireGuardRequest struct {
-	Port            int    `json:"port"`
-	TunnelIP        string `json:"tunnelIp"`
-	EgressInterface string `json:"egressInterface"`
+	Port            int                          `json:"port"`
+	TunnelIP        string                       `json:"tunnelIp"`
+	EgressInterface string                       `json:"egressInterface"`
 	PeerBindings    []DeployWireGuardPeerBinding `json:"peerBindings"`
 }
 
@@ -372,17 +372,33 @@ echo "IP_FORWARD=$forward"
 }
 
 func GetVpsPublicIP(timeout time.Duration) (Result, error) {
-	output, err := RunShell(timeout, "curl -4 -fsSL --max-time 8 https://ifconfig.me/ip")
+	output, err := RunShell(timeout, `set -euo pipefail
+for url in \
+  https://ifconfig.me/ip \
+  https://api.ipify.org \
+  https://checkip.amazonaws.com
+do
+  public_ip=$(curl -4 -fsSL --max-time 8 "$url" | tr -d '[:space:]')
+  if [ -n "$public_ip" ]; then
+    printf 'PUBLIC_IP=%s\nSOURCE=%s\n' "$public_ip" "$url"
+    exit 0
+  fi
+done
+exit 1`)
 	if err != nil {
 		return Result{}, err
 	}
 
-	publicIP := strings.TrimSpace(output)
+	publicIP := extractOutputValue(output, "PUBLIC_IP=")
+	source := extractOutputValue(output, "SOURCE=")
 	if publicIP == "" {
-		return Result{}, fmt.Errorf("ifconfig.me returned an empty response")
+		return Result{}, fmt.Errorf("public IP detection returned an empty response")
 	}
 	if err := ValidateIPv4(publicIP); err != nil {
-		return Result{}, fmt.Errorf("ifconfig.me returned a non-IPv4 response: %s", publicIP)
+		return Result{}, fmt.Errorf("public IP detection returned a non-IPv4 response: %s", publicIP)
+	}
+	if source == "" {
+		source = "curl fallback public-ip probes"
 	}
 
 	return Result{
@@ -390,7 +406,7 @@ func GetVpsPublicIP(timeout time.Duration) (Result, error) {
 		Output:  publicIP,
 		Data: map[string]any{
 			"publicIp": publicIP,
-			"source":   "curl https://ifconfig.me/ip",
+			"source":   source,
 		},
 	}, nil
 }
