@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -11,6 +12,36 @@ import (
 
 var runShell = RunShell
 var getVpsPublicIP = GetVpsPublicIP
+
+// Cached public IP with TTL to avoid repeated external lookups.
+var (
+	cachedPublicIP     string
+	cachedPublicIPTime time.Time
+	cachedPublicIPMu   sync.Mutex
+	publicIPCacheTTL   = 5 * time.Minute
+)
+
+func getCachedVpsPublicIP(timeout time.Duration) (string, error) {
+	cachedPublicIPMu.Lock()
+	defer cachedPublicIPMu.Unlock()
+
+	if cachedPublicIP != "" && time.Since(cachedPublicIPTime) < publicIPCacheTTL {
+		return cachedPublicIP, nil
+	}
+
+	result, err := getVpsPublicIP(timeout)
+	if err != nil {
+		return "", err
+	}
+	if data := result.Data; data != nil {
+		if value, ok := data["publicIp"].(string); ok && strings.TrimSpace(value) != "" {
+			cachedPublicIP = strings.TrimSpace(value)
+			cachedPublicIPTime = time.Now()
+			return cachedPublicIP, nil
+		}
+	}
+	return "", fmt.Errorf("public IP not found in response")
+}
 
 type DeployFRPSRequest struct {
 	Port  int    `json:"port"`
@@ -182,15 +213,7 @@ echo "PORTS_END"
 		return Result{}, fmt.Errorf("failed to parse nwct server config: %w", err)
 	}
 
-	publicIPResult, publicIPErr := getVpsPublicIP(timeout)
-	publicIP := ""
-	if publicIPErr == nil {
-		if data := publicIPResult.Data; data != nil {
-			if value, ok := data["publicIp"].(string); ok {
-				publicIP = strings.TrimSpace(value)
-			}
-		}
-	}
+	publicIP, publicIPErr := getCachedVpsPublicIP(timeout)
 
 	data := map[string]any{
 		"serviceState": serviceState,
