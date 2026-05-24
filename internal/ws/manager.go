@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"strings"
 )
 
 const (
@@ -469,7 +469,7 @@ func (m *Manager) SendCommand(deviceID string, op string, commandData map[string
 		m.pending[deviceID] = make(map[interface{}]*PendingRequest)
 	}
 
-	reqChan := make(chan interface{}, 1)
+	reqChan := make(chan Message, 1)
 	timer := time.NewTimer(timeout)
 
 	pending := &PendingRequest{
@@ -500,17 +500,13 @@ func (m *Manager) SendCommand(deviceID string, op string, commandData map[string
 
 	// Wait for response or timeout
 	select {
-	case resp := <-reqChan:
-		if respMsg, ok := resp.(Message); ok {
-			if respErr := responseError(respMsg); respErr != nil {
-				log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response error: %v", deviceID, op, reqID, respErr)
-				return nil, respErr
-			}
-			log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response success", deviceID, op, reqID)
-			return respMsg.Data, nil
+	case respMsg := <-reqChan:
+		if respErr := responseError(respMsg); respErr != nil {
+			log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response error: %v", deviceID, op, reqID, respErr)
+			return nil, respErr
 		}
-		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - invalid response message", deviceID, op, reqID)
-		return nil, ErrInvalidMessage
+		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response success", deviceID, op, reqID)
+		return respMsg.Data, nil
 	case <-timer.C:
 		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - timeout after %v", deviceID, op, reqID, timeout)
 		return nil, ErrMessageTimeout
@@ -646,8 +642,10 @@ func isEventMessage(op string) bool {
 	return !isResponse(op) && op != "connect" && op != "heartbeat" && op != "ping" && op != "pong"
 }
 
+var reqCounter uint64
+
 func generateReqID() string {
-	return fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), net.ParseIP("127.0.0.1").To4()[3])
+	return fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&reqCounter, 1))
 }
 
 // standardWebsocketConn wraps a gorilla/websocket connection

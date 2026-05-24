@@ -84,7 +84,7 @@ func main() {
 	log.Printf("chawrtd version %s", version.Version)
 	log.Printf("chawrtd listening on %s", cfg.Addr)
 	log.Printf("chawrtd websocket endpoint %s://<host>%s/ws/clawwrt", wsScheme, cfg.Addr)
-	log.Printf("chawrtd token=%q", cfg.Token)
+	log.Printf("chawrtd token=***")
 	log.Printf("chawrtd alias file=%s", cfg.AliasFile)
 	if cfg.TLSConfigured() {
 		log.Printf("chawrtd TLS enabled with cert=%s key=%s", cfg.TLSCertFile, cfg.TLSKeyFile)

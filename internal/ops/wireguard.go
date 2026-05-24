@@ -175,6 +175,40 @@ func boolLabel(ok bool, yes string, no string) string {
 	return "❌ " + no
 }
 
+func checkServerKeyPair(timeout time.Duration) (serverPublicKey string, keyCheck map[string]any) {
+	serverPublicKey = ""
+	if out, keyErr := RunShell(timeout, "sudo cat /etc/wireguard/server_public.key 2>/dev/null || true"); keyErr == nil {
+		serverPublicKey = strings.TrimSpace(out)
+	}
+
+	keyCheck = map[string]any{
+		"status": "skipped",
+	}
+	if serverPublicKey != "" {
+		derivedServerPublicKey := ""
+		if out, deriveErr := RunShell(timeout, "sudo sh -c 'cat /etc/wireguard/server_private.key 2>/dev/null | wg pubkey 2>/dev/null || true'"); deriveErr == nil {
+			derivedServerPublicKey = strings.TrimSpace(out)
+		}
+		if derivedServerPublicKey != "" {
+			status := "mismatch"
+			if derivedServerPublicKey == serverPublicKey {
+				status = "ok"
+			}
+			keyCheck = map[string]any{
+				"status":              status,
+				"configuredPublicKey": serverPublicKey,
+				"derivedPublicKey":    derivedServerPublicKey,
+			}
+		} else {
+			keyCheck = map[string]any{
+				"status": "error",
+				"error":  "failed to derive server public key from private key",
+			}
+		}
+	}
+	return serverPublicKey, keyCheck
+}
+
 func DeployWireGuard(req DeployWireGuardRequest, timeout time.Duration) (Result, error) {
 	port := req.Port
 	if port == 0 {
@@ -323,36 +357,7 @@ echo "IP_FORWARD=$forward"
 
 	wgShow, natRules, ipForwardOk, snatOk := parseWGStatusOutput(output)
 
-	serverPublicKey := ""
-	if out, keyErr := RunShell(timeout, "sudo cat /etc/wireguard/server_public.key 2>/dev/null || true"); keyErr == nil {
-		serverPublicKey = strings.TrimSpace(out)
-	}
-
-	keyCheck := map[string]any{
-		"status": "skipped",
-	}
-	if serverPublicKey != "" {
-		derivedServerPublicKey := ""
-		if out, deriveErr := RunShell(timeout, "sudo sh -c 'cat /etc/wireguard/server_private.key 2>/dev/null | wg pubkey 2>/dev/null || true'"); deriveErr == nil {
-			derivedServerPublicKey = strings.TrimSpace(out)
-		}
-		if derivedServerPublicKey != "" {
-			status := "mismatch"
-			if derivedServerPublicKey == serverPublicKey {
-				status = "ok"
-			}
-			keyCheck = map[string]any{
-				"status":              status,
-				"configuredPublicKey": serverPublicKey,
-				"derivedPublicKey":    derivedServerPublicKey,
-			}
-		} else {
-			keyCheck = map[string]any{
-				"status": "error",
-				"error":  "failed to derive server public key from private key",
-			}
-		}
-	}
+	serverPublicKey, keyCheck := checkServerKeyPair(timeout)
 
 	return Result{
 		Summary: "Fetched WireGuard server status",
@@ -466,36 +471,7 @@ func VerifyWireGuardServer(req VerifyWireGuardRequest, timeout time.Duration) (R
 
 	wgShow, natRules, ipForwardOk, snatOk := parseWGStatusOutput(status.Output)
 
-	serverPublicKey := ""
-	if out, keyErr := RunShell(timeout, "sudo cat /etc/wireguard/server_public.key 2>/dev/null || true"); keyErr == nil {
-		serverPublicKey = strings.TrimSpace(out)
-	}
-
-	keyCheck := map[string]any{
-		"status": "skipped",
-	}
-	if serverPublicKey != "" {
-		derivedServerPublicKey := ""
-		if out, deriveErr := RunShell(timeout, "sudo sh -c 'cat /etc/wireguard/server_private.key 2>/dev/null | wg pubkey 2>/dev/null || true'"); deriveErr == nil {
-			derivedServerPublicKey = strings.TrimSpace(out)
-		}
-		if derivedServerPublicKey != "" {
-			status := "mismatch"
-			if derivedServerPublicKey == serverPublicKey {
-				status = "ok"
-			}
-			keyCheck = map[string]any{
-				"status":              status,
-				"configuredPublicKey": serverPublicKey,
-				"derivedPublicKey":    derivedServerPublicKey,
-			}
-		} else {
-			keyCheck = map[string]any{
-				"status": "error",
-				"error":  "failed to derive server public key from private key",
-			}
-		}
-	}
+	serverPublicKey, keyCheck := checkServerKeyPair(timeout)
 
 	serverPeerConfig := make([]wireGuardServerPeer, 0)
 	if out, confErr := RunShell(timeout, "sudo cat /etc/wireguard/wg0.conf 2>/dev/null || true"); confErr == nil {

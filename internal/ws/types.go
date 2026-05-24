@@ -42,7 +42,7 @@ type WSConn interface {
 type PendingRequest struct {
 	DeviceID  string
 	ReqID     interface{}
-	ReqChan   chan interface{}
+	ReqChan   chan Message
 	Timer     *time.Timer
 	CreatedAt time.Time
 }
