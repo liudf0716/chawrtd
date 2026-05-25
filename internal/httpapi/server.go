@@ -178,6 +178,23 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 	if len(parts) >= 2 {
 		operation = parts[1]
 	}
+	if len(parts) >= 2 && parts[1] == "diagnose" {
+		operation = ""
+		if len(parts) >= 3 {
+			switch parts[2] {
+			case "dhcp":
+				operation = "dhcp_diagnose"
+			case "dns":
+				operation = "dns_diagnose"
+			case "http":
+				operation = "http_service_diagnose"
+			case "https":
+				operation = "https_service_diagnose"
+			default:
+				operation = ""
+			}
+		}
+	}
 	log.Printf("chawrtd device command: method=%s deviceId=%q operation=%q", r.Method, deviceID, operation)
 
 	if deviceID == "" {

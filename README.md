@@ -146,6 +146,42 @@ curl -s -X POST http://127.0.0.1:8001/v1/wg/verify \
   -d '{"pingTargets":["10.0.0.2","10.0.0.3"]}'
 ```
 
+### Device Diagnose
+
+Note: `diagnose/http` and `diagnose/https` target the router's apfree-wifidog captive portal authentication service by default (typically HTTP 2060 and HTTPS 8443), not arbitrary web services.
+
+DHCP:
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/v1/device/<device-id>/diagnose/dhcp \
+  -H 'Content-Type: application/json' \
+  -d '{"interface":"br-lan","probe_count":5}'
+```
+
+DNS:
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/v1/device/<device-id>/diagnose/dns \
+  -H 'Content-Type: application/json' \
+  -d '{"dns_server":"127.0.0.1","domains":["captive.apple.com"],"probe_count":5}'
+```
+
+HTTP:
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/v1/device/<device-id>/diagnose/http \
+  -H 'Content-Type: application/json' \
+  -d '{"host":"127.0.0.1","port":2060,"path":"/","probe_count":5}'
+```
+
+HTTPS:
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/v1/device/<device-id>/diagnose/https \
+  -H 'Content-Type: application/json' \
+  -d '{"host":"127.0.0.1","port":8443,"path":"/","probe_count":5}'
+```
+
 ## Next migration steps
 
 - Add async job queue with `taskId` (`submit/get/cancel`).
