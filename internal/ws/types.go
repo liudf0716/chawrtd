@@ -35,7 +35,6 @@ type Message struct {
 type WSConn interface {
 	SendJSON(msg interface{}) error
 	Close() error
-	IsClosed() bool
 }
 
 // PendingRequest tracks an in-flight request
@@ -46,4 +45,3 @@ type PendingRequest struct {
 	Timer     *time.Timer
 	CreatedAt time.Time
 }
-

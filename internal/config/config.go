@@ -16,6 +16,7 @@ type Config struct {
 	TLSKeyFile     string
 	Token          string
 	AliasFile      string
+	ConfigPath     string // path to the config file that was loaded, or "" if using defaults
 }
 
 // tomlConfig represents the structure of chawrtd.toml
@@ -40,8 +41,9 @@ func Load() Config {
 	}
 
 	// Try to load from TOML config file
-	if fileCfg, err := loadFromFile(); err == nil {
+	if fileCfg, fileCfgPath, err := loadFromFile(); err == nil {
 		cfg = fileCfg
+		cfg.ConfigPath = fileCfgPath
 	}
 
 	// Override with environment variables (highest priority)
@@ -69,7 +71,9 @@ func Load() Config {
 	return cfg
 }
 
-func loadFromFile() (Config, error) {
+// loadFromFile reads and parses the TOML config file.
+// Returns (config, path, error).
+func loadFromFile() (Config, string, error) {
 	// Determine config file path
 	configPath := os.Getenv("CHAWRTD_CONFIG_FILE")
 	if configPath == "" {
@@ -87,18 +91,18 @@ func loadFromFile() (Config, error) {
 
 	// If no config file found, return zero value (will use defaults)
 	if configPath == "" {
-		return Config{}, os.ErrNotExist
+		return Config{}, "", os.ErrNotExist
 	}
 
 	// Read and parse TOML
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return Config{}, err
+		return Config{}, "", err
 	}
 
 	var tomlCfg tomlConfig
 	if err := toml.Unmarshal(data, &tomlCfg); err != nil {
-		return Config{}, err
+		return Config{}, "", err
 	}
 
 	// Build Config from parsed TOML
@@ -125,7 +129,7 @@ func loadFromFile() (Config, error) {
 		cfg.AliasFile = tomlCfg.AliasFile
 	}
 
-	return cfg, nil
+	return cfg, configPath, nil
 }
 
 func (c Config) TLSConfigured() bool {

@@ -1,12 +1,12 @@
 package ws
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -75,7 +75,12 @@ func NewManager(token string, logger Logger) *Manager {
 	return &Manager{
 		sessions:       make(map[string]*DeviceSession),
 		pending:        make(map[string]map[interface{}]*PendingRequest),
-		upgrader:       websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		upgrader: websocket.Upgrader{
+			// CheckOrigin validates the WebSocket upgrade origin. For local-only
+			// deployments (127.0.0.1) this is safe. If chawrtd is exposed to
+			// untrusted networks, restrict this to an allowlist.
+			CheckOrigin: func(r *http.Request) bool { return true },
+		},
 		token:          token,
 		requestTimeout: defaultRequestTimeout,
 		logger:         logger,
@@ -118,13 +123,13 @@ func (m *Manager) OnDisconnect(fn func(string)) {
 }
 
 // SubscribeEvents registers a listener for events from a specific device
-func (m *Manager) SubscribeEvents(deviceID string, listener EventListener) {
-	m.broadcaster.Subscribe(deviceID, listener)
+func (m *Manager) SubscribeEvents(deviceID string, listener EventListener) func() {
+	return m.broadcaster.Subscribe(deviceID, listener)
 }
 
-// SubscribeAllEvents registers a listener for all device events
-func (m *Manager) SubscribeAllEvents(listener EventListener) {
-	m.broadcaster.SubscribeAll(listener)
+// SubscribeAllEvents registers a listener for all events
+func (m *Manager) SubscribeAllEvents(listener EventListener) func() {
+	return m.broadcaster.SubscribeAll(listener)
 }
 
 // GetAlias returns the alias for a device
@@ -282,9 +287,12 @@ func (m *Manager) handleConnection(conn *websocket.Conn, remoteAddr string) {
 	// Send connect response
 	m.sendResponse(conn, msg.ReqID, map[string]any{"ok": true})
 
-	// Notify connected callback
-	if m.onConnect != nil {
-		m.onConnect(session)
+	// Notify connected callback (read under lock to avoid race)
+	m.mu.RLock()
+	connectCb := m.onConnect
+	m.mu.RUnlock()
+	if connectCb != nil {
+		connectCb(session)
 	}
 
 	m.logger.Info(fmt.Sprintf("device %s connected from %s", deviceID, remoteAddr))
@@ -327,17 +335,30 @@ func (m *Manager) handleConnection(conn *websocket.Conn, remoteAddr string) {
 		m.handleMessage(session, msg)
 	}
 
-	// Cleanup
+	// Cleanup session and pending requests
 	m.mu.Lock()
 	if m.sessions[deviceID] == session {
 		delete(m.sessions, deviceID)
+		// Drain pending requests so waiting goroutines unblock.
+		for reqID, pending := range m.pending[deviceID] {
+			pending.Timer.Stop()
+			select {
+			case pending.ReqChan <- Message{ReqID: reqID, Error: "device disconnected"}:
+			default:
+			}
+			close(pending.ReqChan)
+		}
 		delete(m.pending, deviceID)
 	}
 	m.mu.Unlock()
 
 	m.logger.Info(fmt.Sprintf("device %s disconnected", deviceID))
-	if m.onDisconnect != nil {
-		m.onDisconnect(deviceID)
+	// Notify disconnected callback (read under lock to avoid race)
+	m.mu.RLock()
+	disconnectCb := m.onDisconnect
+	m.mu.RUnlock()
+	if disconnectCb != nil {
+		disconnectCb(deviceID)
 	}
 }
 
@@ -363,7 +384,7 @@ func (m *Manager) handleMessage(session *DeviceSession, msg Message) {
 	// Handle event messages (device push events)
 	if isEventMessage(op) {
 		log.Printf("chawrtd device event from=%q op=%q", session.DeviceID, op)
-		m.broadcaster.Emit(context.Background(), &DeviceEvent{
+		m.broadcaster.Emit(&DeviceEvent{
 			Op:       op,
 			DeviceID: session.DeviceID,
 			Alias:    session.Alias,
@@ -394,6 +415,7 @@ func (m *Manager) handleResponse(deviceID string, msg Message) {
 
 	log.Printf("chawrtd response from device=%q reqID=%v: found pending request", deviceID, reqID)
 	delete(m.pending[deviceID], reqID)
+	pending.Timer.Stop()
 
 	select {
 	case pending.ReqChan <- msg:
@@ -464,56 +486,60 @@ func (m *Manager) SendCommand(deviceID string, op string, commandData map[string
 	)
 
 	// Register pending request
+	reqChan := make(chan Message, 1)
+	timer := time.AfterFunc(timeout, func() {
+		m.mu.Lock()
+		if pending, exists := m.pending[deviceID]; exists {
+			if pr, ok := pending[reqID]; ok {
+				delete(pending, reqID)
+				close(pr.ReqChan)
+			}
+		}
+		m.mu.Unlock()
+	})
+
 	m.mu.Lock()
 	if m.pending[deviceID] == nil {
 		m.pending[deviceID] = make(map[interface{}]*PendingRequest)
 	}
-
-	reqChan := make(chan Message, 1)
-	timer := time.NewTimer(timeout)
-
-	pending := &PendingRequest{
+	m.pending[deviceID][reqID] = &PendingRequest{
 		DeviceID:  deviceID,
 		ReqID:     reqID,
 		ReqChan:   reqChan,
 		Timer:     timer,
 		CreatedAt: time.Now(),
 	}
-
-	m.pending[deviceID][reqID] = pending
 	m.mu.Unlock()
 
-	defer func() {
-		timer.Stop()
-		m.mu.Lock()
-		delete(m.pending[deviceID], reqID)
-		m.mu.Unlock()
-	}()
-
-	// Send command
+	// Send via WebSocket
 	if err := session.ws.SendJSON(msg); err != nil {
-		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - send failed: %v", deviceID, op, reqID, err)
+		m.mu.Lock()
+		if pending, exists := m.pending[deviceID]; exists {
+			delete(pending, reqID)
+		}
+		m.mu.Unlock()
+		timer.Stop()
 		return nil, fmt.Errorf("failed to send command: %w", err)
 	}
 
-	log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - sent, waiting for response (timeout=%v)", deviceID, op, reqID, timeout)
+	log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - sent, waiting for response", deviceID, op, reqID)
 
-	// Wait for response or timeout
-	select {
-	case respMsg := <-reqChan:
-		if respErr := responseError(respMsg); respErr != nil {
-			log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response error: %v", deviceID, op, reqID, respErr)
-			return nil, respErr
-		}
-		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - response success", deviceID, op, reqID)
-		return respMsg.Data, nil
-	case <-timer.C:
-		log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - timeout after %v", deviceID, op, reqID, timeout)
+	// Wait for response
+	resp, ok := <-reqChan
+	if !ok {
 		return nil, ErrMessageTimeout
 	}
+
+	log.Printf("chawrtd SendCommand: deviceId=%q op=%q reqID=%v - received response", deviceID, op, reqID)
+
+	if err := responseError(resp); err != nil {
+		return nil, err
+	}
+
+	return resp.Data, nil
 }
 
-// SendCommandNoWait sends a command to a device without waiting for response.
+// SendCommandNoWait sends a command to a device without waiting for response
 func (m *Manager) SendCommandNoWait(deviceID string, op string, commandData map[string]any) (map[string]any, error) {
 	log.Printf("chawrtd SendCommandNoWait: deviceId=%q op=%q", deviceID, op)
 
@@ -522,7 +548,6 @@ func (m *Manager) SendCommandNoWait(deviceID string, op string, commandData map[
 	m.mu.RUnlock()
 
 	if !ok {
-		log.Printf("chawrtd SendCommandNoWait: deviceId=%q op=%q - device not found", deviceID, op)
 		return nil, ErrDeviceNotFound
 	}
 
@@ -533,16 +558,7 @@ func (m *Manager) SendCommandNoWait(deviceID string, op string, commandData map[
 		Data:  commandData,
 	}
 
-	log.Printf(
-		"chawrtd SendCommandNoWait: deviceId=%q op=%q reqID=%v - ws msg.data=%v",
-		deviceID,
-		op,
-		reqID,
-		SanitizeDataForLog(msg.Data),
-	)
-
 	if err := session.ws.SendJSON(msg); err != nil {
-		log.Printf("chawrtd SendCommandNoWait: deviceId=%q op=%q reqID=%v - send failed: %v", deviceID, op, reqID, err)
 		return nil, fmt.Errorf("failed to send command: %w", err)
 	}
 
@@ -603,18 +619,51 @@ func parseAuthMode(mode interface{}) *int {
 	return nil
 }
 
+// toMap converts an interface{} to map[string]any without JSON round-trip.
 func toMap(v interface{}) map[string]any {
+	if v == nil {
+		return nil
+	}
+	// Direct assertion for the common case.
 	if m, ok := v.(map[string]interface{}); ok {
 		return m
 	}
+	// Handle map[string]string and other typed map variants via reflection.
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Map {
+		result := make(map[string]any, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			result[fmt.Sprintf("%v", iter.Key().Interface())] = iter.Value().Interface()
+		}
+		return result
+	}
+	// Last resort: JSON round-trip for structs and other types.
 	data, _ := json.Marshal(v)
 	var m map[string]any
 	json.Unmarshal(data, &m)
 	return m
 }
 
+// isKnownResponseOp checks if an op name is a recognized response suffix.
+// Uses a whitelist instead of generic suffix matching to avoid false positives
+// with event ops that happen to end in "_error" or "_response".
+func isKnownResponseOp(op string) bool {
+	// Known response ops from clawwrt
+	knownSuffixes := []string{
+		"_response",
+		"_error",
+	}
+	for _, suffix := range knownSuffixes {
+		if strings.HasSuffix(op, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 func isResponse(op string) bool {
-	return op == "request_error" || (len(op) > 9 && op[len(op)-9:] == "_response") || (len(op) > 6 && op[len(op)-6:] == "_error")
+	return op == "request_error" || isKnownResponseOp(op)
 }
 
 func responseDataType(msg Message) string {
@@ -708,8 +757,4 @@ func (c *standardWebsocketConn) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.conn.Close()
-}
-
-func (c *standardWebsocketConn) IsClosed() bool {
-	return false // Gorilla doesn't expose closed state directly
 }

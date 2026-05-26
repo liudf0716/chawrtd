@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -13,6 +14,9 @@ import (
 	"chawrtd/internal/version"
 	"chawrtd/internal/ws"
 )
+
+// maxRequestBodySize limits the maximum size of incoming JSON request bodies (1 MB).
+const maxRequestBodySize = 1 << 20
 
 type Server struct {
 	defaultTimeout time.Duration
@@ -221,7 +225,7 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		var requestData map[string]any
 		if err := decodeJSON(r, &requestData); err != nil {
 			log.Printf("chawrtd POST /v1/device/%s/%s: decode error: %v", deviceID, operation, err)
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		log.Printf(
@@ -494,7 +498,7 @@ func (s *Server) handleFRPSDeploy(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -506,7 +510,7 @@ func (s *Server) handleFRPSStatus(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -522,7 +526,7 @@ func (s *Server) handleFRPSVerify(w http.ResponseWriter, r *http.Request) error 
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -534,7 +538,7 @@ func (s *Server) handleFRPSReset(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -546,7 +550,7 @@ func (s *Server) handleVPSPublicIP(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -562,7 +566,7 @@ func (s *Server) handleWGDeploy(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -574,7 +578,7 @@ func (s *Server) handleWGStatus(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -590,7 +594,7 @@ func (s *Server) handleWGReset(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
@@ -606,13 +610,13 @@ func (s *Server) handleWGVerify(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, res)
+	writeOK(w, res)
 	return nil
 }
 
 func decodeJSON(r *http.Request, dst any) error {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(io.LimitReader(r.Body, maxRequestBodySize))
 	if err := decoder.Decode(dst); err != nil {
 		return err
 	}

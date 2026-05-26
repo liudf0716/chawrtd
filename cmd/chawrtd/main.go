@@ -27,21 +27,6 @@ func printUsage() {
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_TLS_KEY_FILE (optional, requires CHAWRTD_TLS_CERT_FILE)\n")
 }
 
-func detectConfigPath() string {
-	configPath := os.Getenv("CHAWRTD_CONFIG_FILE")
-	if configPath != "" {
-		return configPath
-	}
-
-	for _, path := range []string{"./chawrtd.toml", "/etc/chawrtd/chawrtd.toml"} {
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-
-	return ""
-}
-
 func main() {
 	showVersion := flag.Bool("version", false, "show version")
 	showVersionShort := flag.Bool("v", false, "show version")
@@ -61,7 +46,6 @@ func main() {
 		return
 	}
 
-	configPath := detectConfigPath()
 	cfg := config.Load()
 	server := httpapi.New(cfg.DefaultTimeout, cfg.Token)
 	if err := server.InitializeAliasStore(cfg.AliasFile); err != nil {
@@ -76,15 +60,14 @@ func main() {
 		log.Fatalf("chawrtd TLS requires both CHAWRTD_TLS_CERT_FILE and CHAWRTD_TLS_KEY_FILE")
 	}
 
-	if configPath != "" {
-		log.Printf("chawrtd config file: %s", configPath)
+	if cfg.ConfigPath != "" {
+		log.Printf("chawrtd config file: %s", cfg.ConfigPath)
 	} else {
 		log.Printf("chawrtd config: using environment variables and defaults")
 	}
 	log.Printf("chawrtd version %s", version.Version)
 	log.Printf("chawrtd listening on %s", cfg.Addr)
 	log.Printf("chawrtd websocket endpoint %s://<host>%s/ws/clawwrt", wsScheme, cfg.Addr)
-	log.Printf("chawrtd token=***")
 	log.Printf("chawrtd alias file=%s", cfg.AliasFile)
 	if cfg.TLSConfigured() {
 		log.Printf("chawrtd TLS enabled with cert=%s key=%s", cfg.TLSCertFile, cfg.TLSKeyFile)
