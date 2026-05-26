@@ -33,11 +33,11 @@ func New(defaultTimeout time.Duration, token string) *Server {
 		eventStreams:   make(map[chan *ws.DeviceEvent]struct{}),
 	}
 	s.wsManager.SetRequestTimeout(defaultTimeout)
-	
+
 	// Subscribe to all device events for callback forwarding
 	s.wsManager.SubscribeAllEvents(s.forwardEventToCallbacks)
 	s.wsManager.SubscribeAllEvents(s.forwardEventToStreams)
-	
+
 	s.registerRoutes()
 	return s
 }
@@ -88,7 +88,7 @@ func (s *Server) Handler() http.Handler {
 
 			if !isUpgrade {
 				writeJSON(w, http.StatusUpgradeRequired, map[string]any{
-					"error": "websocket upgrade required",
+					"error":  "websocket upgrade required",
 					"reason": reason,
 				})
 				return
@@ -237,8 +237,28 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 			ws.SanitizeDataForLog(requestData),
 		)
 
-		log.Printf("chawrtd POST /v1/device/%s/%s: sending command with timeout=%v", deviceID, operation, s.defaultTimeout)
-		result, err := s.wsManager.SendCommand(deviceID, operation, requestData, s.defaultTimeout)
+		expectResponse := true
+		if rawExpectResponse, ok := requestData["__expect_response"]; ok {
+			switch v := rawExpectResponse.(type) {
+			case bool:
+				expectResponse = v
+			case string:
+				expectResponse = strings.TrimSpace(strings.ToLower(v)) != "false"
+			}
+			delete(requestData, "__expect_response")
+		}
+
+		var (
+			result map[string]any
+			err    error
+		)
+		if expectResponse {
+			log.Printf("chawrtd POST /v1/device/%s/%s: sending command with timeout=%v", deviceID, operation, s.defaultTimeout)
+			result, err = s.wsManager.SendCommand(deviceID, operation, requestData, s.defaultTimeout)
+		} else {
+			log.Printf("chawrtd POST /v1/device/%s/%s: sending command without waiting for response", deviceID, operation)
+			result, err = s.wsManager.SendCommandNoWait(deviceID, operation, requestData)
+		}
 		if err != nil {
 			if errors.Is(err, ws.ErrDeviceNotFound) {
 				log.Printf("chawrtd POST /v1/device/%s/%s: device not found", deviceID, operation)
@@ -265,7 +285,7 @@ func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) error
 	}
 
 	devices := s.wsManager.ListDevices()
-	
+
 	deviceIDs := make([]string, len(devices))
 	for i, dev := range devices {
 		deviceIDs[i] = dev.DeviceID

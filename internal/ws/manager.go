@@ -513,6 +513,50 @@ func (m *Manager) SendCommand(deviceID string, op string, commandData map[string
 	}
 }
 
+// SendCommandNoWait sends a command to a device without waiting for response.
+func (m *Manager) SendCommandNoWait(deviceID string, op string, commandData map[string]any) (map[string]any, error) {
+	log.Printf("chawrtd SendCommandNoWait: deviceId=%q op=%q", deviceID, op)
+
+	m.mu.RLock()
+	session, ok := m.sessions[deviceID]
+	m.mu.RUnlock()
+
+	if !ok {
+		log.Printf("chawrtd SendCommandNoWait: deviceId=%q op=%q - device not found", deviceID, op)
+		return nil, ErrDeviceNotFound
+	}
+
+	reqID := generateReqID()
+	msg := Message{
+		Op:    op,
+		ReqID: reqID,
+		Data:  commandData,
+	}
+
+	log.Printf(
+		"chawrtd SendCommandNoWait: deviceId=%q op=%q reqID=%v - ws msg.data=%v",
+		deviceID,
+		op,
+		reqID,
+		SanitizeDataForLog(msg.Data),
+	)
+
+	if err := session.ws.SendJSON(msg); err != nil {
+		log.Printf("chawrtd SendCommandNoWait: deviceId=%q op=%q reqID=%v - send failed: %v", deviceID, op, reqID, err)
+		return nil, fmt.Errorf("failed to send command: %w", err)
+	}
+
+	log.Printf("chawrtd SendCommandNoWait: deviceId=%q op=%q reqID=%v - sent", deviceID, op, reqID)
+
+	return map[string]any{
+		"accepted":  true,
+		"device_id": deviceID,
+		"op":        op,
+		"req_id":    reqID,
+		"async":     true,
+	}, nil
+}
+
 // ListDevices returns a list of all connected devices
 func (m *Manager) ListDevices() []DeviceSession {
 	m.mu.RLock()
