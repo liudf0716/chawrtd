@@ -1,8 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"log"
@@ -12,6 +10,7 @@ import (
 	"time"
 
 	"chawrtd/internal/ops"
+	"chawrtd/internal/version"
 	"chawrtd/internal/ws"
 )
 
@@ -19,7 +18,6 @@ type Server struct {
 	defaultTimeout time.Duration
 	mux            *http.ServeMux
 	wsManager      *ws.Manager
-	eventCallbacks map[string][]string // deviceID -> list of callback URLs
 	eventStreams   map[chan *ws.DeviceEvent]struct{}
 	mu             sync.RWMutex
 }
@@ -29,13 +27,11 @@ func New(defaultTimeout time.Duration, token string) *Server {
 		defaultTimeout: defaultTimeout,
 		mux:            http.NewServeMux(),
 		wsManager:      ws.NewManager(token, &ws.SimpleLogger{}),
-		eventCallbacks: make(map[string][]string),
 		eventStreams:   make(map[chan *ws.DeviceEvent]struct{}),
 	}
 	s.wsManager.SetRequestTimeout(defaultTimeout)
 
-	// Subscribe to all device events for callback forwarding
-	s.wsManager.SubscribeAllEvents(s.forwardEventToCallbacks)
+	// Subscribe to all device events for SSE stream forwarding
 	s.wsManager.SubscribeAllEvents(s.forwardEventToStreams)
 
 	s.registerRoutes()
@@ -148,9 +144,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/devices/alias/set", s.wrapJSON(s.handleSetAlias))
 	s.mux.HandleFunc("/v1/devices/alias/delete", s.wrapJSON(s.handleDeleteAlias))
 
-	// Event callback management
-	s.mux.HandleFunc("/v1/events/subscribe", s.wrapJSON(s.handleSubscribeEvents))
-	s.mux.HandleFunc("/v1/events/unsubscribe", s.wrapJSON(s.handleUnsubscribeEvents))
+	// Event stream (SSE)
 	s.mux.HandleFunc("/v1/events/stream", s.handleEventsStream)
 
 	s.mux.HandleFunc("/v1/frps/deploy", s.wrapJSON(s.handleFRPSDeploy))
@@ -199,7 +193,7 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 
 	if deviceID == "" {
 		log.Printf("chawrtd device command: invalid path=%q", r.URL.Path)
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid device path"})
+		writeErr(w, http.StatusBadRequest, "invalid device path")
 		return
 	}
 
@@ -208,18 +202,18 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		device := s.wsManager.GetDevice(deviceID)
 		if device == nil {
 			log.Printf("chawrtd GET /v1/device/%s: device not found", deviceID)
-			writeJSON(w, http.StatusNotFound, map[string]any{"error": "device not found"})
+			writeErr(w, http.StatusNotFound, "device not found")
 			return
 		}
 		log.Printf("chawrtd GET /v1/device/%s: found", deviceID)
-		writeJSON(w, http.StatusOK, device)
+		writeOK(w, device)
 		return
 	}
 
 	if r.Method == http.MethodPost {
 		if operation == "" {
 			log.Printf("chawrtd POST /v1/device/%s: missing operation", deviceID)
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid device path"})
+			writeErr(w, http.StatusBadRequest, "invalid device path")
 			return
 		}
 
@@ -237,8 +231,12 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 			ws.SanitizeDataForLog(requestData),
 		)
 
+		// Read X-Expect-Response header (preferred) with body field fallback for backward compat.
 		expectResponse := true
-		if rawExpectResponse, ok := requestData["__expect_response"]; ok {
+		if headerVal := r.Header.Get("X-Expect-Response"); headerVal != "" {
+			expectResponse = strings.TrimSpace(strings.ToLower(headerVal)) != "false"
+		} else if rawExpectResponse, ok := requestData["__expect_response"]; ok {
+			// Legacy: accept __expect_response from body for older clients.
 			switch v := rawExpectResponse.(type) {
 			case bool:
 				expectResponse = v
@@ -262,20 +260,20 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			if errors.Is(err, ws.ErrDeviceNotFound) {
 				log.Printf("chawrtd POST /v1/device/%s/%s: device not found", deviceID, operation)
-				writeJSON(w, http.StatusNotFound, map[string]any{"error": err.Error()})
+				writeErr(w, http.StatusNotFound, err.Error())
 				return
 			}
 			log.Printf("chawrtd POST /v1/device/%s/%s: command error: %v", deviceID, operation, err)
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
 		log.Printf("chawrtd POST /v1/device/%s/%s: command success", deviceID, operation)
-		writeJSON(w, http.StatusOK, result)
+		writeOK(w, result)
 		return
 	}
 
-	writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+	writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
 // handleDevicesList returns list of connected devices
@@ -310,83 +308,23 @@ func (s *Server) handleDevicesList(w http.ResponseWriter, r *http.Request) error
 		devicesList = append(devicesList, deviceMap)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	writeOK(w, map[string]any{
 		"devices": devicesList,
 		"count":   len(devices),
 	})
 	return nil
 }
 
-// handleSubscribeEvents registers an event callback URL
-func (s *Server) handleSubscribeEvents(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodPost {
-		return errors.New("method not allowed")
-	}
-
-	var req struct {
-		CallbackURL string `json:"callback_url"`
-		DeviceID    string `json:"device_id"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		return err
-	}
-
-	if req.CallbackURL == "" || req.DeviceID == "" {
-		return errors.New("callback_url and device_id are required")
-	}
-
-	s.mu.Lock()
-	s.eventCallbacks[req.DeviceID] = append(s.eventCallbacks[req.DeviceID], req.CallbackURL)
-	s.mu.Unlock()
-
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	return nil
-}
-
-// handleUnsubscribeEvents unregisters an event callback URL
-func (s *Server) handleUnsubscribeEvents(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodPost {
-		return errors.New("method not allowed")
-	}
-
-	var req struct {
-		CallbackURL string `json:"callback_url"`
-		DeviceID    string `json:"device_id"`
-	}
-	if err := decodeJSON(r, &req); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	if cbs, ok := s.eventCallbacks[req.DeviceID]; ok {
-		filtered := make([]string, 0, len(cbs))
-		for _, cb := range cbs {
-			if cb != req.CallbackURL {
-				filtered = append(filtered, cb)
-			}
-		}
-		if len(filtered) == 0 {
-			delete(s.eventCallbacks, req.DeviceID)
-		} else {
-			s.eventCallbacks[req.DeviceID] = filtered
-		}
-	}
-	s.mu.Unlock()
-
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-	return nil
-}
-
 // handleEventsStream exposes a server-sent event stream for device events.
 func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "streaming unsupported"})
+		writeErr(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
 
@@ -450,37 +388,6 @@ func (s *Server) handleEventsStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// forwardEventToCallbacks forwards device events to registered callbacks
-func (s *Server) forwardEventToCallbacks(event *ws.DeviceEvent) {
-	s.mu.RLock()
-	callbacks := make([]string, 0)
-	if cbs, ok := s.eventCallbacks[event.DeviceID]; ok {
-		callbacks = append(callbacks, cbs...)
-	}
-	s.mu.RUnlock()
-
-	if len(callbacks) == 0 {
-		return
-	}
-
-	// Forward to each callback URL asynchronously
-	go func() {
-		data, _ := json.Marshal(event)
-		for _, url := range callbacks {
-			go func(cbURL string) {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-
-				req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cbURL, bytes.NewReader(data))
-				req.Header.Set("Content-Type", "application/json")
-
-				client := &http.Client{Timeout: 5 * time.Second}
-				_, _ = client.Do(req)
-			}(url)
-		}
-	}()
-}
-
 // forwardEventToStreams forwards device events to SSE subscribers.
 func (s *Server) forwardEventToStreams(event *ws.DeviceEvent) {
 	s.mu.RLock()
@@ -506,9 +413,7 @@ func (s *Server) handleListAliases(w http.ResponseWriter, r *http.Request) error
 	}
 
 	aliases := s.wsManager.ListAliases()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"aliases": aliases,
-	})
+	writeOK(w, map[string]any{"aliases": aliases})
 	return nil
 }
 
@@ -534,7 +439,7 @@ func (s *Server) handleSetAlias(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeOK(w, map[string]any{"ok": true})
 	return nil
 }
 
@@ -559,12 +464,12 @@ func (s *Server) handleDeleteAlias(w http.ResponseWriter, r *http.Request) error
 		return err
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeOK(w, map[string]any{"ok": true})
 	return nil
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": "chawrtd"})
+	writeOK(w, map[string]any{"service": "chawrtd", "version": version.Version})
 }
 
 type jsonHandler func(http.ResponseWriter, *http.Request) error
@@ -572,7 +477,7 @@ type jsonHandler func(http.ResponseWriter, *http.Request) error
 func (s *Server) wrapJSON(next jsonHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := next(w, r); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			writeErr(w, http.StatusBadRequest, err.Error())
 		}
 	}
 }
@@ -718,4 +623,20 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// writeOK wraps a successful result in the standard API envelope.
+func writeOK(w http.ResponseWriter, data any) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"data": data,
+	})
+}
+
+// writeErr writes a standardized error response.
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]any{
+		"ok":    false,
+		"error": msg,
+	})
 }
