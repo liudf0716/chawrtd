@@ -220,7 +220,7 @@ echo "PORTS_END"
 		"configExists": configExists,
 		"configPath":   configPath,
 		"bindPort":     parsedConfig.BindPort,
-		"token":        parsedConfig.Auth.Token,
+		"tokenSet":     strings.TrimSpace(parsedConfig.Auth.Token) != "",
 		"ports":        portsSection,
 	}
 	if publicIP != "" {

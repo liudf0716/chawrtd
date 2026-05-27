@@ -3,6 +3,7 @@ package ws
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // EventListener is a function that receives device events
@@ -17,18 +18,24 @@ type DeviceEvent struct {
 	Time     int64                  `json:"time"`
 }
 
+type eventListenerEntry struct {
+	id       uint64
+	listener EventListener
+}
+
 // EventBroadcaster manages event listeners for device events
 type EventBroadcaster struct {
-	mu          sync.RWMutex
-	listeners   map[string][]EventListener // deviceID -> listeners
-	allListeners []EventListener            // listeners for all events
+	mu           sync.RWMutex
+	listeners    map[string][]eventListenerEntry // deviceID -> listeners
+	allListeners []eventListenerEntry            // listeners for all events
+	nextID       uint64
 }
 
 // NewEventBroadcaster creates a new event broadcaster
 func NewEventBroadcaster() *EventBroadcaster {
 	return &EventBroadcaster{
-		listeners:    make(map[string][]EventListener),
-		allListeners: make([]EventListener, 0),
+		listeners:    make(map[string][]eventListenerEntry),
+		allListeners: make([]eventListenerEntry, 0),
 	}
 }
 
@@ -37,13 +44,19 @@ func NewEventBroadcaster() *EventBroadcaster {
 func (b *EventBroadcaster) Subscribe(deviceID string, listener EventListener) func() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.listeners[deviceID] = append(b.listeners[deviceID], listener)
-	idx := len(b.listeners[deviceID]) - 1
+	id := atomic.AddUint64(&b.nextID, 1)
+	b.listeners[deviceID] = append(b.listeners[deviceID], eventListenerEntry{id: id, listener: listener})
 	return func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		if list, ok := b.listeners[deviceID]; ok && idx < len(list) {
-			b.listeners[deviceID] = append(list[:idx], list[idx+1:]...)
+		if list, ok := b.listeners[deviceID]; ok {
+			for i := range list {
+				if list[i].id != id {
+					continue
+				}
+				b.listeners[deviceID] = append(list[:i], list[i+1:]...)
+				break
+			}
 			if len(b.listeners[deviceID]) == 0 {
 				delete(b.listeners, deviceID)
 			}
@@ -56,13 +69,17 @@ func (b *EventBroadcaster) Subscribe(deviceID string, listener EventListener) fu
 func (b *EventBroadcaster) SubscribeAll(listener EventListener) func() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.allListeners = append(b.allListeners, listener)
-	idx := len(b.allListeners) - 1
+	id := atomic.AddUint64(&b.nextID, 1)
+	b.allListeners = append(b.allListeners, eventListenerEntry{id: id, listener: listener})
 	return func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		if idx < len(b.allListeners) {
-			b.allListeners = append(b.allListeners[:idx], b.allListeners[idx+1:]...)
+		for i := range b.allListeners {
+			if b.allListeners[i].id != id {
+				continue
+			}
+			b.allListeners = append(b.allListeners[:i], b.allListeners[i+1:]...)
+			break
 		}
 	}
 }
@@ -75,12 +92,16 @@ func (b *EventBroadcaster) Emit(event *DeviceEvent) {
 	// Copy listener slices under lock to minimize hold time.
 	var deviceListeners, allListeners []EventListener
 	if list, ok := b.listeners[event.DeviceID]; ok {
-		deviceListeners = make([]EventListener, len(list))
-		copy(deviceListeners, list)
+		deviceListeners = make([]EventListener, 0, len(list))
+		for _, entry := range list {
+			deviceListeners = append(deviceListeners, entry.listener)
+		}
 	}
 	if len(b.allListeners) > 0 {
-		allListeners = make([]EventListener, len(b.allListeners))
-		copy(allListeners, b.allListeners)
+		allListeners = make([]EventListener, 0, len(b.allListeners))
+		for _, entry := range b.allListeners {
+			allListeners = append(allListeners, entry.listener)
+		}
 	}
 	b.mu.RUnlock()
 

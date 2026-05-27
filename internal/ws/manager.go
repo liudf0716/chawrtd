@@ -149,14 +149,12 @@ func (m *Manager) SetAlias(deviceID, alias string) error {
 		return err
 	}
 
-	// Update the session if it's connected
-	m.mu.RLock()
-	session, exists := m.sessions[deviceID]
-	m.mu.RUnlock()
-
-	if exists && session != nil {
+	// Update the connected session alias under manager lock.
+	m.mu.Lock()
+	if session, exists := m.sessions[deviceID]; exists && session != nil {
 		session.Alias = alias
 	}
+	m.mu.Unlock()
 
 	return nil
 }
@@ -170,14 +168,12 @@ func (m *Manager) DeleteAlias(deviceID string) error {
 		return err
 	}
 
-	// Update the session if it's connected
-	m.mu.RLock()
-	session, exists := m.sessions[deviceID]
-	m.mu.RUnlock()
-
-	if exists && session != nil {
+	// Update the connected session alias under manager lock.
+	m.mu.Lock()
+	if session, exists := m.sessions[deviceID]; exists && session != nil {
 		session.Alias = ""
 	}
+	m.mu.Unlock()
 
 	return nil
 }
@@ -370,7 +366,16 @@ func (m *Manager) handleMessage(session *DeviceSession, msg Message) {
 	}
 	dataType := responseDataType(msg)
 
-	session.LastSeenAt = time.Now()
+	now := time.Now()
+	alias := session.Alias
+	m.mu.Lock()
+	if current := m.sessions[session.DeviceID]; current != nil {
+		if current == session {
+			current.LastSeenAt = now
+		}
+		alias = current.Alias
+	}
+	m.mu.Unlock()
 	log.Printf("chawrtd websocket message from device=%q op=%q data_type=%q reqID=%v", session.DeviceID, op, dataType, msg.ReqID)
 
 	// Handle response messages. clawwrt may send response envelopes that have
@@ -387,7 +392,7 @@ func (m *Manager) handleMessage(session *DeviceSession, msg Message) {
 		m.broadcaster.Emit(&DeviceEvent{
 			Op:       op,
 			DeviceID: session.DeviceID,
-			Alias:    session.Alias,
+			Alias:    alias,
 			Data:     msg.Data,
 			Time:     time.Now().UnixMilli(),
 		})
@@ -590,8 +595,13 @@ func (m *Manager) GetDevice(deviceID string) *DeviceSession {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	session, _ := m.sessions[deviceID]
-	return session
+	session, ok := m.sessions[deviceID]
+	if !ok || session == nil {
+		return nil
+	}
+
+	cloned := *session
+	return &cloned
 }
 
 // Helper functions

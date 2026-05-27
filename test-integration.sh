@@ -36,18 +36,8 @@ echo "Response: $DEVICES"
 echo -e "${GREEN}✓ Device list API working${NC}"
 echo ""
 
-# Step 3: Test event subscription
-echo -e "${YELLOW}Step 3: Testing event callback registration...${NC}"
-CALLBACK_URL="http://127.0.0.1:9000/events"
-SUBSCRIBE_RESPONSE=$(curl -s -X POST "$CHAWRTD_BASE_URL/v1/events/subscribe" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\": \"$DEVICE_ID\", \"callback_url\": \"$CALLBACK_URL\"}")
-echo "Response: $SUBSCRIBE_RESPONSE"
-echo -e "${GREEN}✓ Event subscription API working${NC}"
-echo ""
-
-# Step 4: Test device command API (will fail since no device is connected, but API should work)
-echo -e "${YELLOW}Step 4: Testing device command routing (expected to fail - no device connected)...${NC}"
+# Step 3: Test device command API (will fail since no device is connected, but API should work)
+echo -e "${YELLOW}Step 3: Testing device command routing (expected to fail - no device connected)...${NC}"
 COMMAND_RESPONSE=$(curl -s -X POST "$CHAWRTD_BASE_URL/v1/device/$DEVICE_ID/get_status" \
   -H "Content-Type: application/json" \
   -d '{}')
@@ -59,8 +49,8 @@ else
 fi
 echo ""
 
-# Step 5: Test alias management
-echo -e "${YELLOW}Step 5: Testing device alias management...${NC}"
+# Step 4: Test alias management
+echo -e "${YELLOW}Step 4: Testing device alias management...${NC}"
 SET_ALIAS=$(curl -s -X POST "$CHAWRTD_BASE_URL/v1/devices/alias/set" \
   -H "Content-Type: application/json" \
   -d "{\"device_id\": \"$DEVICE_ID\", \"alias\": \"Test Router\"}")
@@ -75,27 +65,16 @@ else
 fi
 echo ""
 
-# Step 6: Test unsubscribe
-echo -e "${YELLOW}Step 6: Testing event unsubscribe...${NC}"
-UNSUBSCRIBE_RESPONSE=$(curl -s -X POST "$CHAWRTD_BASE_URL/v1/events/unsubscribe" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\": \"$DEVICE_ID\", \"callback_url\": \"$CALLBACK_URL\"}")
-echo "Response: $UNSUBSCRIBE_RESPONSE"
-echo -e "${GREEN}✓ Event unsubscribe API working${NC}"
-echo ""
-
 echo -e "${GREEN}=== Integration Tests Completed ===${NC}"
 echo ""
 echo "Summary:"
 echo "✓ ChawrtD health check"
 echo "✓ Device list API"
-echo "✓ Event subscription API"
 echo "✓ Device command routing API"
 echo "✓ Device alias management"
-echo "✓ Event unsubscribe API"
 echo ""
 echo "Next steps:"
 echo "1. Start clawwrt daemon and verify device connection"
 echo "2. From openclaw-wrt, call device commands via HTTP API"
-echo "3. Verify device events are forwarded via callbacks"
+echo "3. Verify device events are consumed via SSE /v1/events/stream"
 echo "4. Monitor performance metrics"

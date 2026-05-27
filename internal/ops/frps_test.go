@@ -57,8 +57,11 @@ func TestGetFRPSStatusUsesPermissionSafeConfigRead(t *testing.T) {
 	if got, ok := result.Data["bindPort"].(int); !ok || got != 7070 {
 		t.Fatalf("expected bindPort 7070 in data, got %#v", result.Data["bindPort"])
 	}
-	if got, ok := result.Data["token"].(string); !ok || got != "secret-token" {
-		t.Fatalf("expected token in data, got %#v", result.Data["token"])
+	if got, ok := result.Data["tokenSet"].(bool); !ok || !got {
+		t.Fatalf("expected tokenSet true in data, got %#v", result.Data["tokenSet"])
+	}
+	if _, leaked := result.Data["token"]; leaked {
+		t.Fatalf("expected token to be omitted from data, got %#v", result.Data["token"])
 	}
 	if got, ok := result.Data["publicIp"].(string); !ok || got != "203.0.113.42" {
 		t.Fatalf("expected publicIp in data, got %#v", result.Data["publicIp"])
