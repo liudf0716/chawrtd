@@ -235,19 +235,11 @@ func (s *Server) handleDeviceCommand(w http.ResponseWriter, r *http.Request) {
 			ws.SanitizeDataForLog(requestData),
 		)
 
-		// Read X-Expect-Response header (preferred) with body field fallback for backward compat.
-		expectResponse := true
-		if headerVal := r.Header.Get("X-Expect-Response"); headerVal != "" {
-			expectResponse = strings.TrimSpace(strings.ToLower(headerVal)) != "false"
-		} else if rawExpectResponse, ok := requestData["__expect_response"]; ok {
-			// Legacy: accept __expect_response from body for older clients.
-			switch v := rawExpectResponse.(type) {
-			case bool:
-				expectResponse = v
-			case string:
-				expectResponse = strings.TrimSpace(strings.ToLower(v)) != "false"
-			}
-			delete(requestData, "__expect_response")
+		expectResponse, parseErr := parseExpectResponse(r, requestData)
+		if parseErr != nil {
+			log.Printf("chawrtd POST /v1/device/%s/%s: invalid expect-response: %v", deviceID, operation, parseErr)
+			writeErr(w, http.StatusBadRequest, parseErr.Error())
+			return
 		}
 
 		var (
@@ -621,6 +613,46 @@ func decodeJSON(r *http.Request, dst any) error {
 		return err
 	}
 	return nil
+}
+
+func parseExpectResponse(r *http.Request, requestData map[string]any) (bool, error) {
+	if rawHeader := strings.TrimSpace(r.Header.Get("X-Expect-Response")); rawHeader != "" {
+		value, ok := parseBooleanLike(rawHeader)
+		if !ok {
+			return false, errors.New("invalid X-Expect-Response header")
+		}
+		return value, nil
+	}
+
+	rawExpectResponse, ok := requestData["__expect_response"]
+	if !ok {
+		return true, nil
+	}
+	delete(requestData, "__expect_response")
+
+	switch v := rawExpectResponse.(type) {
+	case bool:
+		return v, nil
+	case string:
+		parsed, ok := parseBooleanLike(v)
+		if !ok {
+			return false, errors.New("__expect_response must be a boolean-like value")
+		}
+		return parsed, nil
+	default:
+		return false, errors.New("__expect_response must be bool or string")
+	}
+}
+
+func parseBooleanLike(raw string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
