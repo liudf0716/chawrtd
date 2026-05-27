@@ -34,7 +34,7 @@ type tomlConfig struct {
 func Load() Config {
 	// Start with defaults
 	cfg := Config{
-		Addr:           ":8001",
+		Addr:           "127.0.0.1:8001",
 		DefaultTimeout: 120 * time.Second,
 		Token:          "clawwrt",
 		AliasFile:      "device-aliases.json",
@@ -107,7 +107,7 @@ func loadFromFile() (Config, string, error) {
 
 	// Build Config from parsed TOML
 	cfg := Config{
-		Addr:        ":8001", // default
+		Addr:        "127.0.0.1:8001", // default
 		Token:       "clawwrt",
 		AliasFile:   "device-aliases.json",
 		TLSCertFile: tomlCfg.TLS.CertFile,

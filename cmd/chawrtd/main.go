@@ -18,7 +18,7 @@ func printUsage() {
 	fmt.Fprintf(os.Stdout, "  -h, --help       Show help\n")
 	fmt.Fprintf(os.Stdout, "  -v, --version    Show version\n\n")
 	fmt.Fprintf(os.Stdout, "Environment variables:\n")
-	fmt.Fprintf(os.Stdout, "  CHAWRTD_ADDR (default :8001)\n")
+	fmt.Fprintf(os.Stdout, "  CHAWRTD_ADDR (default 127.0.0.1:8001)\n")
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_DEFAULT_TIMEOUT_SECONDS (default 120)\n")
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_CONFIG_FILE (optional, defaults: ./chawrtd.toml or /etc/chawrtd/chawrtd.toml)\n")
 	fmt.Fprintf(os.Stdout, "  CHAWRTD_TOKEN (default clawwrt)\n")
